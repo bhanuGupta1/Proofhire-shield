@@ -1,0 +1,11 @@
+frontend/
+tests/
+demo-cvs/
+e2e/
+reviews/
+.git/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
