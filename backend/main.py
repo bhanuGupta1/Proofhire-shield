@@ -5,9 +5,9 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from models import ScanResponse, ScanResult
 from scanner import compute_risk, scan_text
@@ -34,6 +34,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ProofHire Shield API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    # Check Content-Length before the body is buffered into memory.
+    # Streaming/chunked uploads without Content-Length still hit the per-read cap below.
+    cl = request.headers.get("content-length")
+    if cl:
+        try:
+            if int(cl) > _MAX_UPLOAD_BYTES + 2048:
+                return JSONResponse(status_code=413, content={"detail": "File exceeds 10 MB limit."})
+        except ValueError:
+            pass
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +80,10 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
     # Sanitise filename — no path traversal
     safe_name = _sanitise_filename(filename)
 
-    text = extract_text(raw, safe_name)
+    try:
+        text = extract_text(raw, safe_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not text.strip():
         raise HTTPException(status_code=422, detail="Could not extract text from file.")
 
