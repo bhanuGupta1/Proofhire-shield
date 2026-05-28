@@ -2,6 +2,7 @@
 from __future__ import annotations
 import io
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
@@ -50,9 +51,12 @@ async def limit_body_size(request: Request, call_next):
     return await call_next(request)
 
 
+_cors_raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
+_CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://proofhire-shield.vercel.app"],
+    allow_origins=_CORS_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )

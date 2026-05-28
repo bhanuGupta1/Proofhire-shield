@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { API_BASE } from '../../lib/api'
 import type { ScanResult } from '../../lib/types'
 
 interface Props {
@@ -14,7 +15,7 @@ export function ProofTab({ result, file }: Props) {
     try {
       const form = new FormData()
       form.append('file', file)
-      const res = await fetch('/trust-report', { method: 'POST', body: form })
+      const res = await fetch(`${API_BASE}/trust-report`, { method: 'POST', body: form })
       if (!res.ok) throw new Error('Failed to generate report')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

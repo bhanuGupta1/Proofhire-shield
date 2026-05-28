@@ -1,9 +1,12 @@
 import type { ScanResponse } from './types'
 
+export const API_BASE: string =
+  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
+
 export async function scanCV(file: File): Promise<ScanResponse> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch('/scan-cv', { method: 'POST', body: form })
+  const res = await fetch(`${API_BASE}/scan-cv`, { method: 'POST', body: form })
   if (!res.ok) {
     const text = await res.text()
     return { ok: false, result: null, error: text }
@@ -12,5 +15,5 @@ export async function scanCV(file: File): Promise<ScanResponse> {
 }
 
 export function trustReportUrl(): string {
-  return '/trust-report'
+  return `${API_BASE}/trust-report`
 }
