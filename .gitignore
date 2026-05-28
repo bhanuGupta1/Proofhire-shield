@@ -1,3 +1,8 @@
+# Private internal docs — never commit these
+CLAUDE.md
+CLAUDE-CODE-STARTER-PROMPT.md
+ProofHire-Project-Brief.docx
+
 # Python
 __pycache__/
 *.py[cod]
