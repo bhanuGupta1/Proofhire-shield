@@ -9,8 +9,8 @@ export function MatchTab() {
       </div>
       <h2 className="text-lg font-semibold text-gray-800">Match scoring — Phase 2</h2>
       <p className="mt-2 max-w-sm text-sm text-gray-500">
-        Paste a job spec alongside the CV to get a skill match score, experience tier, and a
-        client-ready summary paragraph. Coming in Phase 2.
+        Match scoring coming in Phase 2 — skill fit, experience tier, and interview probes
+        in recruiter language.
       </p>
     </div>
   )

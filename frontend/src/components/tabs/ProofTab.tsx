@@ -76,8 +76,9 @@ export function ProofTab({ result, file }: Props) {
       </button>
 
       <p className="text-xs text-gray-400">
-        This report is a screening aid only. Claims flagged should be confirmed directly with the candidate.
-        ProofHire Shield does not store CV data — all processing is ephemeral.
+        This report is your candidate intelligence record. Claims flagged should be confirmed
+        directly with the candidate. ProofHire Shield does not store CV data — all processing
+        is ephemeral.
       </p>
     </div>
   )

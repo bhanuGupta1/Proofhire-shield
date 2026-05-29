@@ -48,7 +48,7 @@ export default function App() {
           <span className="text-2xl">🛡️</span>
           <div>
             <h1 className="text-lg font-bold leading-none text-gray-900">ProofHire Shield</h1>
-            <p className="text-xs text-gray-500">Safe CV screening for recruiters using AI</p>
+            <p className="text-xs text-gray-500">Candidate intelligence — secure by design</p>
           </div>
         </div>
       </header>
