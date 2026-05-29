@@ -82,6 +82,16 @@ def test_no_experience_info_defaults_to_entry():
     assert tier == "Entry"
     assert years is None
 
+def test_implausible_years_ignored():
+    # "99 years" must not inflate the tier; with no other signal -> Entry.
+    tier, years = _compute_experience_tier("Bringing 99 years of experience to the role.")
+    assert years is None
+    assert tier == "Entry"
+
+def test_zero_years_ignored():
+    _, years = _compute_experience_tier("0 years of experience.")
+    assert years is None
+
 
 # ── Education level ──────────────────────────────────────────────────────────────
 

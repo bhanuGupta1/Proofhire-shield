@@ -99,8 +99,12 @@ _TIER_LABELS = {1: "Entry", 2: "Mid-level", 3: "Senior", 4: "Principal / Lead"}
 
 def _compute_experience_tier(text: str) -> tuple[str, int | None]:
     """Returns (tier_label, max_years_found_or_None)."""
-    # Years mentioned in text
-    years_hits = [int(m.group(1)) for m in _YEARS_RE.finditer(text)]
+    # Years mentioned in text — ignore implausible values (0, >50) that would
+    # otherwise let a candidate inflate the tier with "99 years experience".
+    years_hits = [
+        y for y in (int(m.group(1)) for m in _YEARS_RE.finditer(text))
+        if 0 < y <= 50
+    ]
     max_years = max(years_hits) if years_hits else None
 
     # Score from explicit years
