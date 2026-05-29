@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from scanner import scan_text
+
 # ── Skill taxonomy ─────────────────────────────────────────────────────────────
 
 _SKILLS: dict[str, list[str]] = {
@@ -280,16 +282,24 @@ _CLAIM_PATTERNS = [
 
 
 def _extract_key_claims(text: str) -> list[str]:
-    """Extract up to 5 verifiable-looking claims from the CV."""
+    """Extract up to 5 verifiable-looking claims from the CV.
+
+    A claim that itself contains an injection is dropped — otherwise it would be
+    shown on the Match tab and could be copied into a recruiter's AI tool.
+    """
     seen: set[str] = set()
     claims: list[str] = []
     for pat in _CLAIM_PATTERNS:
         for m in pat.finditer(text):
             claim = m.group(0).strip()
             normalised = claim.lower()
-            if normalised not in seen and len(claims) < 5:
-                claims.append(claim)
-                seen.add(normalised)
+            if normalised in seen or len(claims) >= 5:
+                continue
+            injection, _, _ = scan_text(claim)
+            if injection:
+                continue
+            claims.append(claim)
+            seen.add(normalised)
     return claims
 
 
