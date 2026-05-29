@@ -392,6 +392,17 @@ def _make_non_docx_zip() -> bytes:
     return buf.getvalue()
 
 
+def _make_many_entry_docx(n: int = 2100) -> bytes:
+    """DOCX-shaped zip with the required members but a huge number of tiny entries."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", "<x/>")
+        zf.writestr("word/document.xml", "<x/>")
+        for i in range(n):
+            zf.writestr(f"x/{i}.txt", "a")
+    return buf.getvalue()
+
+
 class TestDocxZipBombProtection:
     def test_valid_small_docx_passes(self):
         raw = _make_clean_docx_bytes("Sarah Chen, Senior Engineer. Python, AWS.")
@@ -407,4 +418,9 @@ class TestDocxZipBombProtection:
     def test_non_docx_zip_rejected(self):
         raw = _make_non_docx_zip()
         with pytest.raises(ValueError, match="(?i)(OOXML|valid DOCX)"):
+            extract_text(raw, "evil.docx")
+
+    def test_too_many_entries_rejected(self):
+        raw = _make_many_entry_docx(2100)
+        with pytest.raises(ValueError, match="(?i)many"):
             extract_text(raw, "evil.docx")

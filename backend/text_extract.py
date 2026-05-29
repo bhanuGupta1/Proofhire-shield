@@ -151,8 +151,11 @@ def _extract_docx(raw: bytes) -> str:
     except zipfile.BadZipFile as exc:
         raise ValueError(f"Could not parse DOCX: {exc}") from exc
     with zf:
-        names = set(zf.namelist())
-        total_uncompressed = sum(info.file_size for info in zf.infolist())
+        infos = zf.infolist()
+        names = {info.filename for info in infos}
+        total_uncompressed = sum(info.file_size for info in infos)
+    if len(infos) > 2000:
+        raise ValueError("DOCX has too many internal entries.")
     if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
         raise ValueError("File is not a valid DOCX (missing OOXML parts).")
     if total_uncompressed > 50 * 1024 * 1024:
