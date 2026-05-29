@@ -30,4 +30,15 @@ class ScanResult(BaseModel):
     risk_score: int = Field(ge=0, le=100)
     prompt_injection_findings: list[PromptInjectionFinding]
     pii_findings: list[PIIFinding]
-    ai_text_likelihood: Literal["LIKELY", "POSSIBL
+    ai_text_likelihood: Literal["LIKELY", "POSSIBLE", "UNLIKELY"]
+    ai_text_score: float = Field(ge=0.0, le=1.0)
+    original_text: str
+    safe_copy_text: str
+    summary: str
+    match_analysis: MatchAnalysisModel
+
+
+class ScanResponse(BaseModel):
+    ok: bool
+    result: ScanResult | None = None
+    error: str | None = None

@@ -2,7 +2,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from models import ScanResult, PromptInjectionFinding, PIIFinding
+from models import ScanResult, PromptInjectionFinding, PIIFinding, MatchAnalysisModel
 from trust_report import build_trust_report
 
 
@@ -18,6 +18,15 @@ def _make_result(**overrides) -> ScanResult:
         original_text="Sarah Chen, Engineer.",
         safe_copy_text="Sarah Chen, Engineer.",
         summary="No issues detected.",
+        match_analysis=MatchAnalysisModel(
+            skills={},
+            experience_tier="Entry",
+            years_experience=None,
+            education_level="Not specified",
+            interview_probes=[],
+            key_claims=[],
+            total_skills_found=0,
+        ),
     )
     defaults.update(overrides)
     return ScanResult(**defaults)

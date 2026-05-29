@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 
@@ -148,4 +149,17 @@ async def trust_report(file: UploadFile = File(...)) -> Response:
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
-    return Response
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="trust-report-{scan.result.filename}.pdf"'
+        },
+    )
+
+
+def _sanitise_filename(name: str) -> str:
+    """Strip directory components and unsafe characters from a filename."""
+    base = os.path.basename(name)
+    safe = re.sub(r"[^\w.\-]", "_", base)
+    return safe[:128] or "upload"
