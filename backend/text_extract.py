@@ -44,9 +44,31 @@ def extract_text(raw: bytes, filename: str) -> str:
 def _extract_pdf(raw: bytes) -> str:
     visible = _extract_pdf_pdfminer(raw)
     hidden = _extract_pdf_hidden_text(raw)
+    meta = _extract_pdf_metadata(raw)
+    parts = [visible]
     if hidden.strip():
-        return visible + "\n" + hidden
-    return visible
+        parts.append(hidden)
+    if meta.strip():
+        parts.append(meta)
+    return "\n".join(parts)
+
+
+def _extract_pdf_metadata(raw: bytes) -> str:
+    """User-controllable document info (Title/Author/Subject/Keywords). An injection
+    can hide here just as in DOCX core properties. Tool-set fields (Producer, dates)
+    are skipped to avoid adding noise to a clean CV. Best-effort."""
+    try:
+        import pdfplumber
+    except ImportError:
+        return ""
+    try:
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            meta = pdf.metadata or {}
+    except Exception:
+        return ""
+    return "\n".join(
+        str(meta[k]) for k in ("Title", "Author", "Subject", "Keywords") if meta.get(k)
+    )
 
 
 def _extract_pdf_pdfminer(raw: bytes) -> str:
