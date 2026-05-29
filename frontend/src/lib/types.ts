@@ -12,6 +12,16 @@ export interface PIIFinding {
 export type RiskLevel = 'GREEN' | 'ORANGE' | 'RED'
 export type AILikelihood = 'LIKELY' | 'POSSIBLE' | 'UNLIKELY'
 
+export interface MatchAnalysis {
+  skills: Record<string, string[]>
+  experience_tier: string
+  years_experience: number | null
+  education_level: string
+  interview_probes: string[]
+  key_claims: string[]
+  total_skills_found: number
+}
+
 export interface ScanResult {
   filename: string
   risk_level: RiskLevel
@@ -23,6 +33,7 @@ export interface ScanResult {
   original_text: string
   safe_copy_text: string
   summary: string
+  match_analysis: MatchAnalysis
 }
 
 export interface ScanResponse {

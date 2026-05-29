@@ -83,7 +83,7 @@ export default function App() {
 
             {/* Tab content */}
             {activeTab === 'risk' && <RiskTab result={result} />}
-            {activeTab === 'match' && <MatchTab />}
+            {activeTab === 'match' && <MatchTab result={result} />}
             {activeTab === 'proof' && <ProofTab result={result} file={file} />}
           </div>
         )}
