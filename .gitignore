@@ -3,6 +3,27 @@ CLAUDE.md
 CLAUDE-CODE-STARTER-PROMPT.md
 ProofHire-Project-Brief.docx
 
+# Session files — personal, never commit
+SESSION-HANDOFF.md
+SESSION-3-PROMPT.md
+SESSION-*-PROMPT.md
+
+# Codex adversarial review prompts — personal, never commit
+reviews/
+
+# Claude Code internal + skill files
+.claude/
+.agents/
+andrej-karpathy-skills/
+docs/agents/
+skills-lock.json
+
+# Runtime logs (local dev artefacts)
+uvicorn.err
+uvicorn.log
+vite.err
+vite.log
+
 # Python
 __pycache__/
 *.py[cod]
