@@ -18,11 +18,11 @@ from models import PromptInjectionFinding, PIIFinding
 # ── Zero-width character stripping (Technique 4) ─────────────────────────────
 
 _ZWC_RE = re.compile(
-    r"[­"          # soft hyphen
-    r"​-‏"    # ZWS, ZWNJ, ZWJ, LRM, RLM
-    r"⁠"           # word joiner
-    r"﻿"           # BOM / ZWNBSP
-    r"  ]"    # line/paragraph separator
+    "[\u00ad"          # soft hyphen
+    "\u200b-\u200f"   # ZWS, ZWNJ, ZWJ, LRM, RLM
+    "\u2060"           # word joiner
+    "\ufeff"           # BOM / ZWNBSP
+    "\u2028\u2029]"   # line/paragraph separator
 )
 
 
@@ -107,7 +107,7 @@ def _decode_b64_candidates(text: str) -> list[str]:
             decoded = base64.b64decode(padded, validate=True).decode("utf-8", errors="ignore")
             if len(decoded) >= 8 and decoded.isprintable():
                 results.append(decoded)
-        except Exception:
+        except Exception:  # nosec B110 -- b64 decode on arbitrary strings; failure is expected
             pass
     return results
 

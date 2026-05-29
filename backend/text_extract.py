@@ -141,7 +141,7 @@ def _extract_docx(raw: bytes) -> str:
             for para in section.footer.paragraphs:
                 if para.text:
                     parts.append(para.text)
-    except Exception:
+    except Exception:  # nosec B110 -- optional DOCX section; missing is expected
         pass
 
     # TextBoxes (w:txbxContent — floating boxes, not in doc.paragraphs)
@@ -152,7 +152,7 @@ def _extract_docx(raw: bytes) -> str:
             )
             if text:
                 parts.append(text)
-    except Exception:
+    except Exception:  # nosec B110 -- optional DOCX section; missing is expected
         pass
 
     # Comments (/word/comments.xml relationship)
@@ -165,7 +165,7 @@ def _extract_docx(raw: bytes) -> str:
                     )
                     if text:
                         parts.append(text)
-    except Exception:
+    except Exception:  # nosec B110 -- optional DOCX section; missing is expected
         pass
 
     # Core document properties (title, subject, description, keywords)
@@ -176,7 +176,7 @@ def _extract_docx(raw: bytes) -> str:
             val = getattr(cp, attr, None)
             if val:
                 parts.append(str(val))
-    except Exception:
+    except Exception:  # nosec B110 -- optional DOCX section; missing is expected
         pass
 
     text = "\n".join(parts)
