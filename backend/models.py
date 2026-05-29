@@ -24,6 +24,18 @@ class MatchAnalysisModel(BaseModel):
     total_skills_found: int
 
 
+class JDMatchResultModel(BaseModel):
+    match_score: int = Field(ge=0, le=100)
+    matched_skills: list[str]
+    missing_skills: list[str]
+    bonus_skills: list[str]
+
+
+class JDMatchRequest(BaseModel):
+    cv_text: str = Field(min_length=1, max_length=20000)
+    jd_text: str = Field(min_length=1, max_length=20000)
+
+
 class ScanResult(BaseModel):
     filename: str
     risk_level: Literal["GREEN", "ORANGE", "RED"]
@@ -36,6 +48,7 @@ class ScanResult(BaseModel):
     safe_copy_text: str
     summary: str
     match_analysis: MatchAnalysisModel
+    jd_match: JDMatchResultModel | None = None
 
 
 class ScanResponse(BaseModel):

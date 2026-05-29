@@ -11,7 +11,8 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from models import MatchAnalysisModel, ScanResponse, ScanResult
+from models import JDMatchRequest, JDMatchResultModel, MatchAnalysisModel, ScanResponse, ScanResult
+from jd_match import match_cv_to_jd
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
@@ -172,6 +173,18 @@ async def trust_report(file: UploadFile = File(...)) -> Response:
         headers={
             "Content-Disposition": f'attachment; filename="trust-report-{scan.result.filename}.pdf"'
         },
+    )
+
+
+@app.post("/match-jd", response_model=JDMatchResultModel)
+def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
+    """Score a CV's skills against a pasted job description. Text-only, no upload."""
+    result = match_cv_to_jd(req.cv_text, req.jd_text)
+    return JDMatchResultModel(
+        match_score=result.match_score,
+        matched_skills=result.matched_skills,
+        missing_skills=result.missing_skills,
+        bonus_skills=result.bonus_skills,
     )
 
 
