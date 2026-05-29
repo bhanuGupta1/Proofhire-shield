@@ -26,8 +26,27 @@ _ZWC_RE = re.compile(
 )
 
 
+# Additional invisible / format / bidi code points (B1). Built from code points
+# via chr() so this source stays pure ASCII — no literal bidi chars that could
+# reorder or hide source text. Complements the escape-defined _ZWC_RE above.
+_EXTRA_INVISIBLE_RE = re.compile(
+    "[" + "".join(
+        chr(c) for c in (
+            0x034F,                   # combining grapheme joiner
+            *range(0x115F, 0x1161),   # Hangul choseong / jungseong fillers
+            *range(0x180B, 0x180F),   # Mongolian free variation selectors + vowel sep
+            *range(0x202A, 0x202F),   # bidi embeddings / overrides (LRE RLE PDF LRO RLO)
+            *range(0x2066, 0x206A),   # bidi isolates (LRI RLI FSI PDI)
+            0x3164,                   # Hangul filler
+            *range(0xFE00, 0xFE10),   # variation selectors 1-16
+            0xFFA0,                   # halfwidth Hangul filler
+        )
+    ) + "]"
+)
+
+
 def _strip_zero_width(text: str) -> str:
-    return _ZWC_RE.sub("", text)
+    return _EXTRA_INVISIBLE_RE.sub("", _ZWC_RE.sub("", text))
 
 
 # ── Homoglyph normalization (Technique 3) ─────────────────────────────────────
