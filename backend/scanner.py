@@ -112,22 +112,30 @@ def _apply_homoglyphs(text: str) -> str:
 # Matches strings long enough to encode a meaningful instruction (≥20 chars base64
 # = ≥14 plaintext bytes) and surrounded by non-base64 characters.
 
+# Matches both the standard (+/) and URL-safe (-_) base64 alphabets.
 _B64_RE = re.compile(
-    r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])"
+    r"(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{20,}={0,2}(?![A-Za-z0-9+/=_-])"
 )
+
+# Cap candidates scanned to bound CPU on a CV stuffed with base64-looking tokens.
+_MAX_B64_CANDIDATES = 256
+_URLSAFE_TO_STD = str.maketrans("-_", "+/")
 
 
 def _decode_b64_candidates(text: str) -> list[str]:
     results: list[str] = []
-    for m in _B64_RE.finditer(text):
-        b64 = m.group(0)
+    for i, m in enumerate(_B64_RE.finditer(text)):
+        if i >= _MAX_B64_CANDIDATES:
+            break
+        # Normalise URL-safe alphabet to standard, then pad to a multiple of 4.
+        b64 = m.group(0).translate(_URLSAFE_TO_STD)
         padded = b64 + "=" * ((-len(b64)) % 4)
         try:
             decoded = base64.b64decode(padded, validate=True).decode("utf-8", errors="ignore")
-            if len(decoded) >= 8 and decoded.isprintable():
-                results.append(decoded)
         except Exception:  # nosec B110 -- b64 decode on arbitrary strings; failure is expected
-            pass
+            continue
+        if len(decoded) >= 8 and decoded.isprintable():
+            results.append(decoded)
     return results
 
 
