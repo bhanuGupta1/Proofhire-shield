@@ -86,15 +86,22 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
     # Sanitise filename — no path traversal
     safe_name = _sanitise_filename(filename)
 
-    # Declared type (extension) must match actual content. Distinct from 422:
-    # 400 = wrong file type uploaded; 422 = correct type but unparseable.
+    # Declared type (extension) must match the content's magic bytes in BOTH
+    # directions. 400 = wrong file type uploaded; 422 = correct type but unparseable.
+    # A PDF/DOCX mislabelled .txt would otherwise be decoded as raw text, leaving its
+    # hidden/metadata layers unscanned.
     lower = safe_name.lower()
-    for ext, magic in _MAGIC.items():
-        if lower.endswith(ext) and not raw.startswith(magic):
-            raise HTTPException(
-                status_code=400,
-                detail="File content does not match declared type.",
-            )
+    declared = (
+        ".pdf" if lower.endswith(".pdf")
+        else ".docx" if lower.endswith(".docx")
+        else ".txt"
+    )
+    detected = next((ext for ext, magic in _MAGIC.items() if raw.startswith(magic)), ".txt")
+    if declared != detected:
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match declared type.",
+        )
 
     try:
         text = extract_text(raw, safe_name)

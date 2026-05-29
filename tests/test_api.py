@@ -88,6 +88,15 @@ def test_filename_path_traversal_is_sanitised():
     assert "/" not in name and "\\" not in name and ".." not in name
 
 
+def test_binary_content_as_txt_extension_rejected():
+    # PDF/DOCX bytes mislabelled .txt would be decoded as raw text, leaving hidden
+    # layers unscanned — reject the extension/content mismatch with 400.
+    r = _post_file(content=b"%PDF-1.5\n1 0 obj", filename="cv.txt", content_type="text/plain")
+    assert r.status_code == 400
+    r2 = _post_file(content=b"PK\x03\x04\x14\x00", filename="cv.txt", content_type="text/plain")
+    assert r2.status_code == 400
+
+
 # ── Size limit (F-10) ─────────────────────────────────────────────────────────
 
 def test_oversized_upload_rejected_by_middleware():
