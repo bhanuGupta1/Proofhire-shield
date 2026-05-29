@@ -15,7 +15,7 @@ from models import MatchAnalysisModel, ScanResponse, ScanResult
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
-from text_extract import extract_text
+from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,16 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
     filename = file.filename or "unknown"
     # Sanitise filename — no path traversal
     safe_name = _sanitise_filename(filename)
+
+    # Declared type (extension) must match actual content. Distinct from 422:
+    # 400 = wrong file type uploaded; 422 = correct type but unparseable.
+    lower = safe_name.lower()
+    for ext, magic in _MAGIC.items():
+        if lower.endswith(ext) and not raw.startswith(magic):
+            raise HTTPException(
+                status_code=400,
+                detail="File content does not match declared type.",
+            )
 
     try:
         text = extract_text(raw, safe_name)

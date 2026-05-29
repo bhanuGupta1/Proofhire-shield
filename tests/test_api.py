@@ -55,23 +55,37 @@ def test_allowed_content_types_accepted():
     assert r.status_code in (200, 422)
 
 
-# ── Magic-bytes guard ─────────────────────────────────────────────────────────
+# ── Magic-bytes guard (400 = declared type != content; 422 = unparseable) ─────
 
-def test_fake_pdf_content_type_returns_422():
-    """Binary garbage claiming to be PDF → 422, not 500."""
+def test_fake_pdf_content_type_returns_400():
+    """Binary garbage claiming to be PDF → 400 (declared type != content)."""
     r = _post_file(content=b"This is not a PDF at all",
                    filename="evil.pdf", content_type="application/pdf")
-    assert r.status_code == 422
+    assert r.status_code == 400
     assert r.json()["detail"]  # error message present
 
 
-def test_fake_docx_content_type_returns_422():
+def test_fake_docx_content_type_returns_400():
     r = _post_file(
         content=b"Not a DOCX either",
         filename="evil.docx",
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+    assert r.status_code == 400
+
+
+def test_corrupt_pdf_with_valid_magic_returns_422():
+    """Correct %PDF magic but unparseable body → 422, not 400."""
+    r = _post_file(content=b"%PDF-1.4\nnot really a pdf body",
+                   filename="cv.pdf", content_type="application/pdf")
     assert r.status_code == 422
+
+
+def test_filename_path_traversal_is_sanitised():
+    r = _post_file(DEMO_DIR / "01_clean.pdf", filename="../../etc/cv.pdf")
+    assert r.status_code == 200
+    name = r.json()["result"]["filename"]
+    assert "/" not in name and "\\" not in name and ".." not in name
 
 
 # ── Size limit (F-10) ─────────────────────────────────────────────────────────
@@ -158,7 +172,7 @@ def test_trust_report_for_injection_cv():
     assert r.content[:4] == b"%PDF"
 
 
-def test_trust_report_bad_file_returns_422():
+def test_trust_report_bad_file_returns_400():
     r = _post_file(content=b"garbage", filename="bad.pdf",
                    content_type="application/pdf", endpoint="/trust-report")
-    assert r.status_code == 422
+    assert r.status_code == 400
