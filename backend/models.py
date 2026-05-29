@@ -14,20 +14,20 @@ class PIIFinding(BaseModel):
     matched_text: str
 
 
+class MatchAnalysisModel(BaseModel):
+    skills: dict[str, list[str]]
+    experience_tier: str
+    years_experience: int | None
+    education_level: str
+    interview_probes: list[str]
+    key_claims: list[str]
+    total_skills_found: int
+
+
 class ScanResult(BaseModel):
     filename: str
     risk_level: Literal["GREEN", "ORANGE", "RED"]
     risk_score: int = Field(ge=0, le=100)
     prompt_injection_findings: list[PromptInjectionFinding]
     pii_findings: list[PIIFinding]
-    ai_text_likelihood: Literal["LIKELY", "POSSIBLE", "UNLIKELY"]
-    ai_text_score: float = Field(ge=0.0, le=1.0)
-    original_text: str
-    safe_copy_text: str
-    summary: str
-
-
-class ScanResponse(BaseModel):
-    ok: bool
-    result: ScanResult | None = None
-    error: str | None = None
+    ai_text_likelihood: Literal["LIKELY", "POSSIBL

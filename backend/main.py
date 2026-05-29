@@ -10,11 +10,12 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from models import ScanResponse, ScanResult
+from models import MatchAnalysisModel, ScanResponse, ScanResult
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
 from text_extract import extract_text
+from match_analysis import analyze_match
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -102,6 +103,7 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
         ai_label = "UNLIKELY"
 
     safe_copy = generate_safe_copy(text, injection, pii)
+    match = analyze_match(text)
 
     summary_parts = []
     if injection:
@@ -126,6 +128,15 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
         original_text=text,
         safe_copy_text=safe_copy,
         summary=" ".join(summary_parts),
+        match_analysis=MatchAnalysisModel(
+            skills=match.skills,
+            experience_tier=match.experience_tier,
+            years_experience=match.years_experience,
+            education_level=match.education_level,
+            interview_probes=match.interview_probes,
+            key_claims=match.key_claims,
+            total_skills_found=match.total_skills_found,
+        ),
     )
     return ScanResponse(ok=True, result=result)
 
@@ -137,20 +148,4 @@ async def trust_report(file: UploadFile = File(...)) -> Response:
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="trust-report-{scan.result.filename}.pdf"'
-        },
-    )
-
-
-def _sanitise_filename(name: str) -> str:
-    """Strip directory components and whitespace from a filename."""
-    import os
-    base = os.path.basename(name)
-    # Keep only safe characters
-    import re
-    safe = re.sub(r"[^\w.\-]", "_", base)
-    return safe[:128] or "upload"
+    return Response
