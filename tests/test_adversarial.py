@@ -5,7 +5,7 @@ Each test embeds the bypass payload and asserts the engine catches it after
 hardening. Tests are deliberately minimal: they prove the specific technique
 works, not that the whole system is impregnable.
 """
-import sys, os, io, base64
+import sys, os, io, base64, zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 import pytest
@@ -341,3 +341,40 @@ class TestMalformedFileHandling:
         # Empty TXT — no exception, returns empty string for main.py to 422
         result = extract_text(b"", "cv.txt")
         assert result == ""
+
+
+# ─── B3: DOCX zip-bomb / structure protection ────────────────────────────────
+
+def _make_zip_bomb_docx(uncompressed_mb: int = 51) -> bytes:
+    """A PK zip carrying the required OOXML member names but an oversized member
+    that compresses tiny — declared uncompressed size exceeds the 50 MB guard."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", "<x/>")
+        zf.writestr("word/document.xml", b"\0" * (uncompressed_mb * 1024 * 1024))
+    return buf.getvalue()
+
+
+def _make_non_docx_zip() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("notes.txt", "just a zip, not a docx")
+    return buf.getvalue()
+
+
+class TestDocxZipBombProtection:
+    def test_valid_small_docx_passes(self):
+        raw = _make_clean_docx_bytes("Sarah Chen, Senior Engineer. Python, AWS.")
+        text = extract_text(raw, "cv.docx")
+        assert "Sarah Chen" in text
+
+    def test_zip_bomb_rejected(self):
+        raw = _make_zip_bomb_docx(51)
+        assert raw[:4] == b"PK\x03\x04"  # passes the magic-byte gate first
+        with pytest.raises(ValueError, match="(?i)50 MB"):
+            extract_text(raw, "evil.docx")
+
+    def test_non_docx_zip_rejected(self):
+        raw = _make_non_docx_zip()
+        with pytest.raises(ValueError, match="(?i)(OOXML|valid DOCX)"):
+            extract_text(raw, "evil.docx")

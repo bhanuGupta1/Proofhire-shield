@@ -4,6 +4,7 @@ All parsing is in-memory — no temp files written to disk.
 """
 from __future__ import annotations
 import io
+import zipfile
 
 _MAX_PAGES = 20
 _MAX_TEXT_CHARS = 2_000_000  # 2 MB of text is already enormous for a CV
@@ -119,6 +120,21 @@ def _extract_docx(raw: bytes) -> str:
         from docx.oxml.ns import qn
     except ImportError as e:
         raise ValueError("DOCX extraction library unavailable.") from e
+
+    # Zip-bomb / structure preflight: inspect the central directory (no decompression)
+    # before python-docx loads the archive, so a small file that inflates to gigabytes
+    # cannot exhaust memory.
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"Could not parse DOCX: {exc}") from exc
+    with zf:
+        names = set(zf.namelist())
+        total_uncompressed = sum(info.file_size for info in zf.infolist())
+    if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
+        raise ValueError("File is not a valid DOCX (missing OOXML parts).")
+    if total_uncompressed > 50 * 1024 * 1024:
+        raise ValueError("DOCX uncompressed size exceeds 50 MB limit.")
 
     try:
         doc = docx.Document(io.BytesIO(raw))
