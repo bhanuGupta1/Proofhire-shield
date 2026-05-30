@@ -17,6 +17,8 @@ const CATEGORY_COLOURS: Record<string, string> = {
   'Cloud & DevOps':         'bg-orange-50 text-orange-700 border-orange-200',
   'Databases':              'bg-green-50 text-green-700 border-green-200',
   'Tools & Practices':      'bg-gray-50 text-gray-700 border-gray-200',
+  'Testing & QA':           'bg-pink-50 text-pink-700 border-pink-200',
+  'Data & ML Ops':          'bg-cyan-50 text-cyan-700 border-cyan-200',
 }
 
 export function MatchTab({ result }: Props) {
