@@ -2,7 +2,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from models import ScanResult, PromptInjectionFinding, PIIFinding, MatchAnalysisModel
+from models import ScanResult, PromptInjectionFinding, PIIFinding, MatchAnalysisModel, CompletenessResultModel
 from trust_report import build_trust_report
 
 
@@ -27,6 +27,7 @@ def _make_result(**overrides) -> ScanResult:
             key_claims=[],
             total_skills_found=0,
             summary="",
+            completeness=CompletenessResultModel(score=0, breakdown={}),
         ),
     )
     defaults.update(overrides)

@@ -14,6 +14,11 @@ class PIIFinding(BaseModel):
     matched_text: str
 
 
+class CompletenessResultModel(BaseModel):
+    score: int = Field(ge=0, le=100)
+    breakdown: dict[str, bool]
+
+
 class MatchAnalysisModel(BaseModel):
     skills: dict[str, list[str]]
     experience_tier: str
@@ -23,6 +28,7 @@ class MatchAnalysisModel(BaseModel):
     key_claims: list[str]
     total_skills_found: int
     summary: str
+    completeness: CompletenessResultModel
 
 
 class JDMatchResultModel(BaseModel):

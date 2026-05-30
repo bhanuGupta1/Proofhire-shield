@@ -318,6 +318,41 @@ def _extract_key_claims(text: str) -> list[str]:
     return claims
 
 
+# ── CV completeness ───────────────────────────────────────────────────────────
+
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+_PHONE_RE = re.compile(r"\+?\d[\d\s\-().]{7,}\d")
+_LINKEDIN_RE = re.compile(r"linkedin\.com/in/", re.IGNORECASE)
+_GITHUB_RE = re.compile(r"github\.com/[a-zA-Z0-9_-]+", re.IGNORECASE)
+_WORK_DATES_RE = re.compile(r"20\d\d[\s\-–—]+(?:20\d\d|present|current)", re.IGNORECASE)
+_SKILLS_HEADING_RE = re.compile(r"\b(skills|technologies|stack)\b", re.IGNORECASE)
+
+
+@dataclass
+class CompletenessResult:
+    score: int
+    breakdown: dict[str, bool]
+
+
+def score_cv_completeness(text: str) -> CompletenessResult:
+    """Score the structural completeness of a CV (0-100) from 9 signals."""
+    word_count = len(text.split())
+    checks: dict[str, tuple[bool, int]] = {
+        "Has email":                    (bool(_EMAIL_RE.search(text)), 10),
+        "Has phone":                    (bool(_PHONE_RE.search(text)), 10),
+        "Has LinkedIn":                 (bool(_LINKEDIN_RE.search(text)), 10),
+        "Has GitHub":                   (bool(_GITHUB_RE.search(text)), 10),
+        "Has work-entry dates":         (bool(_WORK_DATES_RE.search(text)), 15),
+        "Has measurable achievement":   (any(p.search(text) for p in _CLAIM_PATTERNS), 15),
+        "Has skills heading":           (bool(_SKILLS_HEADING_RE.search(text)), 10),
+        "Word count >= 300":            (word_count >= 300, 10),
+        "Word count >= 600":            (word_count >= 600, 10),
+    }
+    score = sum(pts for hit, pts in checks.values() if hit)
+    breakdown = {label: hit for label, (hit, _) in checks.items()}
+    return CompletenessResult(score=score, breakdown=breakdown)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 # ── Candidate summary card ────────────────────────────────────────────────────
@@ -367,6 +402,7 @@ class MatchAnalysis:
     key_claims: list[str]
     total_skills_found: int
     summary: str
+    completeness: CompletenessResult
 
 
 def analyze_match(text: str) -> MatchAnalysis:
@@ -378,6 +414,7 @@ def analyze_match(text: str) -> MatchAnalysis:
     claims = _extract_key_claims(text)
     total = sum(len(v) for v in skills.values())
     summary = generate_candidate_summary(skills, tier, years, education, claims)
+    completeness = score_cv_completeness(text)
 
     return MatchAnalysis(
         skills=skills,
@@ -388,4 +425,5 @@ def analyze_match(text: str) -> MatchAnalysis:
         key_claims=claims,
         total_skills_found=total,
         summary=summary,
+        completeness=completeness,
     )

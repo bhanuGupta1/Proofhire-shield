@@ -3,7 +3,13 @@ education level, interview probes, key claims."""
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from match_analysis import analyze_match, _extract_skills, _compute_experience_tier, _detect_education
+from match_analysis import (
+    analyze_match,
+    _extract_skills,
+    _compute_experience_tier,
+    _detect_education,
+    score_cv_completeness,
+)
 
 
 # ── Skill extraction ────────────────────────────────────────────────────────────
@@ -206,3 +212,33 @@ def test_summary_handles_no_skills():
     assert isinstance(result.summary, str)
     assert result.summary
     assert "Entry" in result.summary  # default tier shows up
+
+
+# ── CV completeness ──────────────────────────────────────────────────────────
+
+def test_completeness_has_email():
+    r = score_cv_completeness("Sarah Chen sarah.chen@example.com")
+    assert r.breakdown["Has email"] is True
+
+
+def test_completeness_has_github():
+    r = score_cv_completeness("Portfolio: github.com/sarahc")
+    assert r.breakdown["Has GitHub"] is True
+
+
+def test_completeness_empty():
+    r = score_cv_completeness("")
+    assert r.score == 0
+
+
+def test_completeness_full_cv():
+    cv = (
+        "Sarah Chen — Senior Software Engineer\n"
+        "sarah.chen@example.com | +64 21 555 0101 | linkedin.com/in/sarahc | github.com/sarahc\n"
+        "Xero (2020 - present) — Senior Engineer\n"
+        "Built billing API, reduced p99 latency 420ms->95ms.\n"
+        "Skills: Python, Django, FastAPI, PostgreSQL, AWS, Docker, Kubernetes, Redis.\n"
+        + ("word " * 320)
+    )
+    r = score_cv_completeness(cv)
+    assert r.score >= 70

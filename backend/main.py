@@ -11,7 +11,14 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from models import JDMatchRequest, JDMatchResultModel, MatchAnalysisModel, ScanResponse, ScanResult
+from models import (
+    CompletenessResultModel,
+    JDMatchRequest,
+    JDMatchResultModel,
+    MatchAnalysisModel,
+    ScanResponse,
+    ScanResult,
+)
 from jd_match import match_cv_to_jd
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
@@ -156,6 +163,10 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
             key_claims=match.key_claims,
             total_skills_found=match.total_skills_found,
             summary=match.summary,
+            completeness=CompletenessResultModel(
+                score=match.completeness.score,
+                breakdown=match.completeness.breakdown,
+            ),
         ),
     )
     return ScanResponse(ok=True, result=result)
