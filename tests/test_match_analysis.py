@@ -192,3 +192,17 @@ def test_full_entry_cv():
     assert result.experience_tier == "Entry"
     assert result.education_level == "Bachelor's"
     assert result.total_skills_found >= 4
+
+
+def test_summary_is_nonempty_for_any_cv():
+    result = analyze_match("Sarah Chen, Senior Python engineer, 8 years, MSc, AWS, Docker.")
+    assert isinstance(result.summary, str)
+    assert result.summary  # non-empty
+    assert "Senior" in result.summary
+    assert "MSc" in result.summary
+
+def test_summary_handles_no_skills():
+    result = analyze_match("Quiet candidate with no specific keywords mentioned.")
+    assert isinstance(result.summary, str)
+    assert result.summary
+    assert "Entry" in result.summary  # default tier shows up

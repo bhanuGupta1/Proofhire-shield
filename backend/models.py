@@ -22,6 +22,7 @@ class MatchAnalysisModel(BaseModel):
     interview_probes: list[str]
     key_claims: list[str]
     total_skills_found: int
+    summary: str
 
 
 class JDMatchResultModel(BaseModel):

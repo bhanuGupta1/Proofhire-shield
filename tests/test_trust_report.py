@@ -26,6 +26,7 @@ def _make_result(**overrides) -> ScanResult:
             interview_probes=[],
             key_claims=[],
             total_skills_found=0,
+            summary="",
         ),
     )
     defaults.update(overrides)

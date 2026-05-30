@@ -155,6 +155,7 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
             interview_probes=match.interview_probes,
             key_claims=match.key_claims,
             total_skills_found=match.total_skills_found,
+            summary=match.summary,
         ),
     )
     return ScanResponse(ok=True, result=result)

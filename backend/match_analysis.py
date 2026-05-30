@@ -151,6 +151,17 @@ _EDU_RANK = {
     "Certification / Bootcamp": 1,
 }
 
+# Short forms used by the recruiter summary card.
+_EDU_ABBREV = {
+    "PhD": "PhD",
+    "Master's": "MSc",
+    "Bachelor's": "BSc",
+    "Associate's": "Assoc",
+    "High School": "HS",
+    "Certification / Bootcamp": "Cert",
+    "Not specified": "—",
+}
+
 
 def _detect_education(text: str) -> str:
     """Return highest education level found, or 'Not specified'."""
@@ -309,6 +320,43 @@ def _extract_key_claims(text: str) -> list[str]:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+# ── Candidate summary card ────────────────────────────────────────────────────
+
+def generate_candidate_summary(
+    skills: dict[str, list[str]],
+    tier: str,
+    years: int | None,
+    education: str,
+    key_claims: list[str],
+) -> str:
+    """One-line recruiter summary in the style:
+    'Senior Python · React · AWS engineer (8y exp) | MSc | 3 verifiable claims'.
+    Template-based, no LLM.
+    """
+    top_skills: list[str] = []
+    for _, items in sorted(skills.items(), key=lambda kv: -len(kv[1])):
+        for s in items:
+            if s not in top_skills:
+                top_skills.append(s)
+                if len(top_skills) >= 3:
+                    break
+        if len(top_skills) >= 3:
+            break
+
+    tier_label = tier or "Entry"
+    if top_skills:
+        role = f"{tier_label} {' · '.join(top_skills)} engineer"
+    else:
+        role = f"{tier_label} candidate"
+    if years is not None:
+        role += f" ({years}y exp)"
+
+    edu = _EDU_ABBREV.get(education, "—")
+    n = len(key_claims)
+    claims = f"{n} verifiable claim{'s' if n != 1 else ''}"
+    return f"{role} | {edu} | {claims}"
+
+
 @dataclass
 class MatchAnalysis:
     skills: dict[str, list[str]]
@@ -318,6 +366,7 @@ class MatchAnalysis:
     interview_probes: list[str]
     key_claims: list[str]
     total_skills_found: int
+    summary: str
 
 
 def analyze_match(text: str) -> MatchAnalysis:
@@ -328,6 +377,7 @@ def analyze_match(text: str) -> MatchAnalysis:
     probes = _generate_probes(skills, tier)
     claims = _extract_key_claims(text)
     total = sum(len(v) for v in skills.values())
+    summary = generate_candidate_summary(skills, tier, years, education, claims)
 
     return MatchAnalysis(
         skills=skills,
@@ -337,4 +387,5 @@ def analyze_match(text: str) -> MatchAnalysis:
         interview_probes=probes,
         key_claims=claims,
         total_skills_found=total,
+        summary=summary,
     )
