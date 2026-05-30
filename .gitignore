@@ -11,6 +11,9 @@ SESSION-*-PROMPT.md
 # Codex adversarial review prompts — personal, never commit
 reviews/
 
+# Local clones of deployment remotes — never commit
+hf-space-api/
+
 # Claude Code internal + skill files
 .claude/
 .agents/
