@@ -20,6 +20,7 @@ export interface MatchAnalysis {
   interview_probes: string[]
   key_claims: string[]
   total_skills_found: number
+  summary: string
 }
 
 export interface ScanResult {

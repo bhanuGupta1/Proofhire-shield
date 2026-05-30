@@ -26,6 +26,11 @@ export function MatchTab({ result }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Recruiter one-liner — copy into ATS notes */}
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 font-mono text-sm text-gray-800">
+        {m.summary}
+      </div>
+
       {/* Summary bar */}
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3">
