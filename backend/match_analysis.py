@@ -22,7 +22,7 @@ _SKILLS: dict[str, list[str]] = {
     "Frameworks & Libraries": [
         "React", "Angular", "Vue", "Next\\.js", "Node\\.js", "Express",
         "Django", "Flask", "FastAPI", "Spring", "Rails", "Laravel",
-        "TensorFlow", "PyTorch", "Pandas", "NumPy", "Scikit-learn",
+        "TensorFlow", "PyTorch", "Scikit-learn",
         "Tailwind", "Bootstrap", "GraphQL", "REST", "gRPC",
     ],
     "Cloud & DevOps": [
@@ -40,6 +40,14 @@ _SKILLS: dict[str, list[str]] = {
         "Git", "GitHub", "GitLab", "Jira", "Confluence", "Figma",
         "Agile", "Scrum", "Kanban", "CI/CD", "TDD", "BDD",
         "Microservices", "Serverless", "Linux", "Unix",
+    ],
+    "Testing & QA": [
+        "pytest", "Jest", "Cypress", "Selenium", "Playwright",
+        "JUnit", "Mocha", "Chai", "Postman", "k6",
+    ],
+    "Data & ML Ops": [
+        "Pandas", "NumPy", "Spark", "Airflow", "dbt", "Jupyter",
+        "Matplotlib", "Seaborn", "MLflow", "Weights & Biases", "Hugging Face",
     ],
 }
 
@@ -236,6 +244,27 @@ _PROBE_TEMPLATES: dict[str, list[str]] = {
     "microservices": [
         "How do you handle distributed transactions across microservices?",
         "What's your approach to inter-service authentication?",
+    ],
+    "pytest": [
+        "How do you structure pytest fixtures for tests that share expensive setup?",
+    ],
+    "cypress": [
+        "What's your approach to flaky end-to-end tests in Cypress?",
+    ],
+    "selenium": [
+        "How do you keep Selenium tests stable across browser and version drift?",
+    ],
+    "playwright": [
+        "When would you reach for Playwright over Cypress, and why?",
+    ],
+    "airflow": [
+        "Walk me through a non-trivial Airflow DAG you debugged in production.",
+    ],
+    "dbt": [
+        "How do you manage incremental models and testing in dbt?",
+    ],
+    "spark": [
+        "How do you debug a Spark job spending too long in shuffles?",
     ],
 }
 

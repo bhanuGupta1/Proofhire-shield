@@ -242,3 +242,18 @@ def test_completeness_full_cv():
     )
     r = score_cv_completeness(cv)
     assert r.score >= 70
+
+
+# ── Taxonomy: Testing & QA + Data & ML Ops categories (C4) ───────────────────
+
+def test_taxonomy_testing_qa_category():
+    result = analyze_match("Used pytest and Cypress for our test suite.")
+    assert "pytest" in result.skills.get("Testing & QA", [])
+    assert "Cypress" in result.skills.get("Testing & QA", [])
+
+
+def test_taxonomy_pandas_now_in_data_ml_ops():
+    result = analyze_match("Built data pipelines with Pandas and Airflow.")
+    assert "Pandas" in result.skills.get("Data & ML Ops", [])
+    # And no longer appears in Frameworks & Libraries.
+    assert "Pandas" not in result.skills.get("Frameworks & Libraries", [])
