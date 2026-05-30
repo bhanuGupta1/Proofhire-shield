@@ -46,11 +46,19 @@ export async function generateAssessment(
     body: JSON.stringify(body),
   })
   if (!res.ok) {
-    if (res.status === 503) {
-      throw new Error('Assessment is not yet configured on the server (Claude API key missing).')
+    // Display whatever the backend says. Never hardcode provider names — the
+    // server may be running on Anthropic, Groq/DeepSeek R1, or anything else.
+    const raw = await res.text()
+    let detail = raw
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed.detail === 'string') {
+        detail = parsed.detail
+      }
+    } catch {
+      // body wasn't JSON — use the raw text we already have
     }
-    const text = await res.text()
-    throw new Error(`Assessment failed (${res.status}): ${text}`)
+    throw new Error(detail || `Request failed (${res.status})`)
   }
   return res.json()
 }
