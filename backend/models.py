@@ -44,6 +44,36 @@ class JDMatchRequest(BaseModel):
     jd_text: str = Field(min_length=1, max_length=20000)
 
 
+class AssessmentDimensionModel(BaseModel):
+    name: str
+    text: str
+    bullets: list[str] = []
+
+
+class AssessmentReportModel(BaseModel):
+    framework: str
+    headline: str
+    dimensions: list[AssessmentDimensionModel]
+    overall_recommendation: str
+    overall_score: int = Field(ge=0, le=100)
+    next_steps: list[str]
+
+
+class AssessmentRiskSignals(BaseModel):
+    """Subset of /scan-cv risk fields needed by the assessment prompt."""
+    risk_level: Literal["GREEN", "ORANGE", "RED"]
+    risk_score: int = Field(ge=0, le=100)
+    injection_count: int = Field(ge=0)
+    ai_text_likelihood: Literal["LIKELY", "POSSIBLE", "UNLIKELY"]
+
+
+class AssessmentRequest(BaseModel):
+    cv_text: str = Field(min_length=1, max_length=20000)
+    match_analysis: MatchAnalysisModel
+    risk_signals: AssessmentRiskSignals
+    role_context: str | None = Field(default=None, max_length=2000)
+
+
 class ScanResult(BaseModel):
     filename: str
     risk_level: Literal["GREEN", "ORANGE", "RED"]

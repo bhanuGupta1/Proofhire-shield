@@ -12,6 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from models import (
+    AssessmentDimensionModel,
+    AssessmentReportModel,
+    AssessmentRequest,
     CompletenessResultModel,
     JDMatchRequest,
     JDMatchResultModel,
@@ -20,6 +23,7 @@ from models import (
     ScanResult,
 )
 from jd_match import match_cv_to_jd
+from assessment import AssessmentError, generate_assessment_report
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
@@ -200,6 +204,37 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
         matched_skills=result.matched_skills,
         missing_skills=result.missing_skills,
         bonus_skills=result.bonus_skills,
+    )
+
+
+@app.post("/assessment", response_model=AssessmentReportModel)
+def assessment_endpoint(req: AssessmentRequest) -> AssessmentReportModel:
+    """Generate a structured ProofHire v1 candidate assessment via Claude.
+
+    Requires ANTHROPIC_API_KEY to be configured on the server. Returns 503 if not.
+    Inputs are Phase-1 outputs: cv_text (use safe_copy_text from /scan-cv),
+    the match_analysis block, and a compact risk_signals block.
+    """
+    try:
+        report = generate_assessment_report(
+            cv_text=req.cv_text,
+            match_analysis=req.match_analysis.model_dump(),
+            risk_signals=req.risk_signals.model_dump(),
+            role_context=req.role_context,
+        )
+    except AssessmentError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return AssessmentReportModel(
+        framework=report.framework,
+        headline=report.headline,
+        dimensions=[
+            AssessmentDimensionModel(name=d.name, text=d.text, bullets=d.bullets)
+            for d in report.dimensions
+        ],
+        overall_recommendation=report.overall_recommendation,
+        overall_score=report.overall_score,
+        next_steps=report.next_steps,
     )
 
 

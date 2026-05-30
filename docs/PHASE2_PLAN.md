@@ -116,4 +116,20 @@ that produces a structured assessment report shown to the recruiter.
 
 - Phase 1: shipped (Session 3 end). 157 tests, 0 HIGH remaining after three Codex
   passes. See `SESSION-HANDOFF.md`.
-- Phase 2+: NOT STARTED. Awaiting answers to the 4 questions above.
+- Phase 2 backend: SHIPPED — `/assessment` endpoint + ProofHire v1 framework +
+  Claude API integration (mocked-client tests, real call requires
+  `ANTHROPIC_API_KEY`). 171 tests after the slice.
+- Phase 2 frontend: NEXT — Assessment tab.
+- Phases 3-8: pending Phase 2 completion + Bhanu sign-off.
+
+### Phase 2 answers from Bhanu (2026-05-30)
+
+1. **Experience tiers** — keep the existing 4 tiers (Entry / Mid-level / Senior /
+   Principal-Lead). Don't map to HireIQ's 3. Role detection added later as a
+   separate signal, not a tier replacement.
+2. **Proprietary scoring** — don't wait; build ProofHire v1 (copying HireIQ's
+   rubric carries legal risk). Label the framework explicitly in output as
+   "ProofHire v1 — heuristic scoring".
+3. **API key strategy** — env var locally + HF Spaces Secret on deploy. AWS
+   Secrets Manager deferred to a later phase (no compliance trigger yet).
+4. **Phase 2 width** — `/assessment` endpoint alone. DB is its own slice (Phase 3).

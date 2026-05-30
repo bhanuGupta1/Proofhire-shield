@@ -260,3 +260,84 @@ def test_match_jd_oversized_text_rejected():
     big = "x" * 20001
     r = client.post("/match-jd", json={"cv_text": big, "jd_text": "Need Python."})
     assert r.status_code == 422
+
+
+# ── /assessment endpoint (Phase 2) ───────────────────────────────────────────
+
+def _assessment_match_analysis():
+    return {
+        "skills": {"Languages": ["Python"]},
+        "experience_tier": "Senior",
+        "years_experience": 8,
+        "education_level": "Master's",
+        "interview_probes": [],
+        "key_claims": [],
+        "total_skills_found": 1,
+        "summary": "Senior Python engineer | MSc | 0 verifiable claims",
+        "completeness": {"score": 50, "breakdown": {"Has email": True}},
+        "red_flags": [],
+    }
+
+
+def _assessment_body():
+    return {
+        "cv_text": "Sarah Chen, Senior Engineer.",
+        "match_analysis": _assessment_match_analysis(),
+        "risk_signals": {
+            "risk_level": "GREEN",
+            "risk_score": 0,
+            "injection_count": 0,
+            "ai_text_likelihood": "UNLIKELY",
+        },
+    }
+
+
+def test_assessment_endpoint_503_without_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r = client.post("/assessment", json=_assessment_body())
+    assert r.status_code == 503
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_assessment_endpoint_happy_path(monkeypatch):
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="Senior Python engineer",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="Worth interviewing",
+        overall_score=78,
+        next_steps=["schedule interview", "verify AWS", "check refs"],
+    )
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client.post("/assessment", json=_assessment_body())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["framework"] == FRAMEWORK_NAME
+    assert body["overall_score"] == 78
+    assert len(body["next_steps"]) == 3
+
+
+def test_assessment_endpoint_validates_required_fields():
+    body = {
+        "cv_text": "x",
+        "risk_signals": {
+            "risk_level": "GREEN",
+            "risk_score": 0,
+            "injection_count": 0,
+            "ai_text_likelihood": "UNLIKELY",
+        },
+    }
+    r = client.post("/assessment", json=body)
+    assert r.status_code == 422
+
+
+def test_assessment_endpoint_oversized_cv_text_rejected():
+    body = _assessment_body()
+    body["cv_text"] = "x" * 20001
+    r = client.post("/assessment", json=body)
+    assert r.status_code == 422
