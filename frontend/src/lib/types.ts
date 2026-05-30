@@ -12,6 +12,11 @@ export interface PIIFinding {
 export type RiskLevel = 'GREEN' | 'ORANGE' | 'RED'
 export type AILikelihood = 'LIKELY' | 'POSSIBLE' | 'UNLIKELY'
 
+export interface CompletenessResult {
+  score: number
+  breakdown: Record<string, boolean>
+}
+
 export interface MatchAnalysis {
   skills: Record<string, string[]>
   experience_tier: string
@@ -21,6 +26,7 @@ export interface MatchAnalysis {
   key_claims: string[]
   total_skills_found: number
   summary: string
+  completeness: CompletenessResult
 }
 
 export interface ScanResult {

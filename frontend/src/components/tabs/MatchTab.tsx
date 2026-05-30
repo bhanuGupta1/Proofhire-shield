@@ -31,6 +31,45 @@ export function MatchTab({ result }: Props) {
         {m.summary}
       </div>
 
+      {/* CV completeness meter */}
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium text-gray-500">CV completeness</span>
+          <span
+            className={`font-semibold ${
+              m.completeness.score >= 70
+                ? 'text-green-600'
+                : m.completeness.score >= 40
+                ? 'text-amber-600'
+                : 'text-red-600'
+            }`}
+          >
+            {m.completeness.score}%
+          </span>
+        </div>
+        <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
+          <div
+            className={`h-full ${
+              m.completeness.score >= 70
+                ? 'bg-green-500'
+                : m.completeness.score >= 40
+                ? 'bg-amber-500'
+                : 'bg-red-500'
+            }`}
+            style={{ width: `${m.completeness.score}%` }}
+          />
+        </div>
+        {Object.entries(m.completeness.breakdown).filter(([, hit]) => !hit).length > 0 && (
+          <p className="mt-2 text-xs text-gray-400">
+            Missing:{' '}
+            {Object.entries(m.completeness.breakdown)
+              .filter(([, hit]) => !hit)
+              .map(([label]) => label)
+              .join(', ')}
+          </p>
+        )}
+      </div>
+
       {/* Summary bar */}
       <div className="flex flex-wrap gap-3">
         <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3">
