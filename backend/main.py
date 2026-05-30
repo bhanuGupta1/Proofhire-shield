@@ -167,6 +167,7 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
                 score=match.completeness.score,
                 breakdown=match.completeness.breakdown,
             ),
+            red_flags=match.red_flags,
         ),
     )
     return ScanResponse(ok=True, result=result)

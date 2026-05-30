@@ -257,3 +257,30 @@ def test_taxonomy_pandas_now_in_data_ml_ops():
     assert "Pandas" in result.skills.get("Data & ML Ops", [])
     # And no longer appears in Frameworks & Libraries.
     assert "Pandas" not in result.skills.get("Frameworks & Libraries", [])
+
+
+# ── Red flags (C5) ───────────────────────────────────────────────────────────
+
+def test_red_flags_broad_stack():
+    text = (
+        "1 year of experience. Skills: Python, JavaScript, TypeScript, Java, C#, Go, "
+        "Rust, Ruby, PHP, Swift, Kotlin, Scala, R, SQL, React, Vue, Angular, Django."
+    )
+    result = analyze_match(text)
+    assert any("broad tech stack" in f.lower() for f in result.red_flags)
+
+
+def test_red_flags_inconsistent_years():
+    result = analyze_match("5 years Python and 8 years Java backgrounds.")
+    assert any("inconsistent" in f.lower() for f in result.red_flags)
+
+
+def test_red_flags_short_cv():
+    result = analyze_match("Just a stub.")
+    assert any("very short" in f.lower() for f in result.red_flags)
+
+
+def test_red_flags_clean_cv_has_none():
+    text = "Sarah Chen — Senior Engineer. 8 years experience. Python, AWS." + (" word" * 200)
+    result = analyze_match(text)
+    assert result.red_flags == []

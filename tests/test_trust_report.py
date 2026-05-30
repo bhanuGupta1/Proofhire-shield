@@ -28,6 +28,7 @@ def _make_result(**overrides) -> ScanResult:
             total_skills_found=0,
             summary="",
             completeness=CompletenessResultModel(score=0, breakdown={}),
+            red_flags=[],
         ),
     )
     defaults.update(overrides)

@@ -29,6 +29,7 @@ class MatchAnalysisModel(BaseModel):
     total_skills_found: int
     summary: str
     completeness: CompletenessResultModel
+    red_flags: list[str]
 
 
 class JDMatchResultModel(BaseModel):

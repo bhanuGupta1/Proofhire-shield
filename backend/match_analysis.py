@@ -421,6 +421,42 @@ def generate_candidate_summary(
     return f"{role} | {edu} | {claims}"
 
 
+# ── Red flags ────────────────────────────────────────────────────────────────
+
+def detect_red_flags(
+    text: str,
+    skills: dict[str, list[str]],
+    tier: str,
+    years: int | None,
+) -> list[str]:
+    """Heuristic red flags surfaced to recruiters. Not a hiring decision."""
+    flags: list[str] = []
+
+    total_skills = sum(len(v) for v in skills.values())
+
+    if total_skills >= 15 and years is not None and years < 3:
+        flags.append("Unusually broad tech stack for stated experience.")
+
+    if total_skills == 0 and years is not None and years >= 5:
+        flags.append("5+ years claimed but no recognised technical skills detected.")
+
+    distinct_years = {
+        y for y in (int(m.group(1)) for m in _YEARS_RE.finditer(text))
+        if 0 < y <= 50
+    }
+    if len(distinct_years) >= 2:
+        flags.append("Inconsistent experience claims — verify with candidate.")
+
+    if len(text.split()) < 150:
+        flags.append("CV appears very short — may be incomplete or a stub.")
+
+    employers = set(re.findall(r"(?:at|@)\s+([A-Z][a-zA-Z]+)", text))
+    if len(employers) > 3 and years is not None and years < 2:
+        flags.append("High job frequency relative to stated experience.")
+
+    return flags
+
+
 @dataclass
 class MatchAnalysis:
     skills: dict[str, list[str]]
@@ -432,6 +468,7 @@ class MatchAnalysis:
     total_skills_found: int
     summary: str
     completeness: CompletenessResult
+    red_flags: list[str]
 
 
 def analyze_match(text: str) -> MatchAnalysis:
@@ -444,6 +481,7 @@ def analyze_match(text: str) -> MatchAnalysis:
     total = sum(len(v) for v in skills.values())
     summary = generate_candidate_summary(skills, tier, years, education, claims)
     completeness = score_cv_completeness(text)
+    red_flags = detect_red_flags(text, skills, tier, years)
 
     return MatchAnalysis(
         skills=skills,
@@ -455,4 +493,5 @@ def analyze_match(text: str) -> MatchAnalysis:
         total_skills_found=total,
         summary=summary,
         completeness=completeness,
+        red_flags=red_flags,
     )
