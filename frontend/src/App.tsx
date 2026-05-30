@@ -3,16 +3,18 @@ import { FileUpload } from './components/FileUpload'
 import { RiskTab } from './components/tabs/RiskTab'
 import { MatchTab } from './components/tabs/MatchTab'
 import { ProofTab } from './components/tabs/ProofTab'
+import { AssessmentTab } from './components/tabs/AssessmentTab'
 import { JDMatcher } from './components/JDMatcher'
 import { scanCV } from './lib/api'
 import type { ScanResult } from './lib/types'
 
-type Tab = 'risk' | 'match' | 'proof'
+type Tab = 'risk' | 'match' | 'proof' | 'assessment'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'risk', label: 'Risk' },
   { id: 'match', label: 'Match' },
   { id: 'proof', label: 'Proof' },
+  { id: 'assessment', label: 'Assessment' },
 ]
 
 export default function App() {
@@ -86,6 +88,7 @@ export default function App() {
             {activeTab === 'risk' && <RiskTab result={result} />}
             {activeTab === 'match' && <MatchTab result={result} />}
             {activeTab === 'proof' && <ProofTab result={result} file={file} />}
+            {activeTab === 'assessment' && <AssessmentTab result={result} />}
 
             {/* JD matcher — always visible below the tabs */}
             <div className="mt-8">

@@ -119,7 +119,9 @@ that produces a structured assessment report shown to the recruiter.
 - Phase 2 backend: SHIPPED — `/assessment` endpoint + ProofHire v1 framework +
   Claude API integration (mocked-client tests, real call requires
   `ANTHROPIC_API_KEY`). 171 tests after the slice.
-- Phase 2 frontend: NEXT — Assessment tab.
+- Phase 2 frontend: SHIPPED — Assessment tab below Risk / Match / Proof with
+  optional role-context textarea and a structured report view (headline, score
+  badge, 7 dimensions, next steps, framework label).
 - Phases 3-8: pending Phase 2 completion + Bhanu sign-off.
 
 ### Phase 2 answers from Bhanu (2026-05-30)

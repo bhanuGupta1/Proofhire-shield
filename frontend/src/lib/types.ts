@@ -56,3 +56,18 @@ export interface JDMatchResult {
   missing_skills: string[]
   bonus_skills: string[]
 }
+
+export interface AssessmentDimension {
+  name: string
+  text: string
+  bullets: string[]
+}
+
+export interface AssessmentReport {
+  framework: string
+  headline: string
+  dimensions: AssessmentDimension[]
+  overall_recommendation: string
+  overall_score: number
+  next_steps: string[]
+}
