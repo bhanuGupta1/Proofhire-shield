@@ -41,3 +41,10 @@ export interface ScanResponse {
   result: ScanResult | null
   error: string | null
 }
+
+export interface JDMatchResult {
+  match_score: number
+  matched_skills: string[]
+  missing_skills: string[]
+  bonus_skills: string[]
+}

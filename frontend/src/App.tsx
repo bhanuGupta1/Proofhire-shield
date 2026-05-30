@@ -3,6 +3,7 @@ import { FileUpload } from './components/FileUpload'
 import { RiskTab } from './components/tabs/RiskTab'
 import { MatchTab } from './components/tabs/MatchTab'
 import { ProofTab } from './components/tabs/ProofTab'
+import { JDMatcher } from './components/JDMatcher'
 import { scanCV } from './lib/api'
 import type { ScanResult } from './lib/types'
 
@@ -85,6 +86,11 @@ export default function App() {
             {activeTab === 'risk' && <RiskTab result={result} />}
             {activeTab === 'match' && <MatchTab result={result} />}
             {activeTab === 'proof' && <ProofTab result={result} file={file} />}
+
+            {/* JD matcher — always visible below the tabs */}
+            <div className="mt-8">
+              <JDMatcher cvText={result.safe_copy_text} />
+            </div>
           </div>
         )}
       </main>
