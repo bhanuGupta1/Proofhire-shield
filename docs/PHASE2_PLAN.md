@@ -116,12 +116,16 @@ that produces a structured assessment report shown to the recruiter.
 
 - Phase 1: shipped (Session 3 end). 157 tests, 0 HIGH remaining after three Codex
   passes. See `SESSION-HANDOFF.md`.
-- Phase 2 backend: SHIPPED — `/assessment` endpoint + ProofHire v1 framework +
-  Claude API integration (mocked-client tests, real call requires
-  `ANTHROPIC_API_KEY`). 171 tests after the slice.
-- Phase 2 frontend: SHIPPED — Assessment tab below Risk / Match / Proof with
-  optional role-context textarea and a structured report view (headline, score
-  badge, 7 dimensions, next steps, framework label).
+- Phase 2 backend: SHIPPED + HARDENED — `/assessment` endpoint, ProofHire v1
+  framework, Claude API integration. End-of-phase Codex review (P2) found
+  HIGH=3 MED=2 LOW=1; all six were closed in the P2-review hardening commit
+  (server-derived signals, escaped delimiters in `<signals>`/`<cv>`/`<role>`,
+  masked upstream error). Confirm review (P3) returned HIGH=0 MED=0 LOW=1
+  (no-API-key disclosure); the LOW closed in 9e4fbc0. **176 tests; bandit 0;
+  semgrep 0.**
+- Phase 2 frontend: SHIPPED + ALIGNED — Assessment tab below Risk/Match/Proof
+  with optional role-context textarea and structured-report view. `api.ts` now
+  sends `original_text` to match the server-side re-derive shift.
 - Phases 3-8: pending Phase 2 completion + Bhanu sign-off.
 
 ### Phase 2 answers from Bhanu (2026-05-30)
