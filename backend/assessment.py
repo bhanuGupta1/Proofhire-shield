@@ -7,7 +7,8 @@ Zero coupling to HireIQ's proprietary methodology.
 
 Provider selection (env-driven, in order of preference):
   1. ANTHROPIC_API_KEY → Anthropic Claude (default Sonnet, prompt-caching enabled).
-  2. GROQ_API_KEY → Groq running DeepSeek R1 (free-tier fallback, no card required).
+  2. GROQ_API_KEY → Groq running Llama 3.3 70B Versatile (free-tier fallback,
+     no card required). DeepSeek R1 distill variants were decommissioned 2026-05.
   3. neither → AssessmentError (endpoint returns 503).
 
 Defence-in-depth on prompt injection (informed by the Phase-2 Codex reviews):
@@ -23,8 +24,10 @@ Defence-in-depth on prompt injection (informed by the Phase-2 Codex reviews):
   tool input, never raw model prose.
 - Upstream SDK failures and missing-key diagnostics are masked into a single generic
   public message; specifics are logged server-side via logger.warning.
-- For Groq / DeepSeek R1: any <think>...</think> reasoning tags that leak into the
-  tool-call arguments are stripped from every string field before parsing.
+- For Groq: any <think>...</think> reasoning tags that leak into the tool-call
+  arguments are stripped from every string field before parsing. Kept defensive
+  even though the current default model (Llama 3.3 70B) does not emit them, so a
+  future swap back to a DeepSeek-R1-class model can't reintroduce the leak.
 """
 from __future__ import annotations
 
@@ -39,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 FRAMEWORK_NAME = "ProofHire v1 — heuristic scoring"
 _DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
-_DEFAULT_GROQ_MODEL = "deepseek-r1-distill-llama-70b"
+_DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 _MAX_TOKENS = 4096
 
 _SYSTEM_PROMPT = (
@@ -195,7 +198,7 @@ def _payload_to_report(payload: dict) -> AssessmentReport:
     )
 
 
-# ── DeepSeek R1 reasoning-tag stripping ──────────────────────────────────────
+# ── Reasoning-tag stripping (defensive, model-agnostic) ─────────────────────
 
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
@@ -329,8 +332,9 @@ def _generate_with_groq(
         logger.warning("Groq tool call arguments not valid JSON", exc_info=True)
         raise AssessmentError("Assessment service is temporarily unavailable.") from exc
 
-    # DeepSeek R1 can emit <think>...</think> reasoning blocks even inside structured
-    # tool args. Strip them from every string in the payload before report assembly.
+    # DeepSeek-R1-class models can emit <think>...</think> reasoning even inside
+    # structured tool args. The current default (Llama 3.3) doesn't, but the strip
+    # is a cheap no-op for clean output and guarantees future safety if we swap.
     payload = _strip_think_tags_in_payload(payload)
     return _payload_to_report(payload)
 

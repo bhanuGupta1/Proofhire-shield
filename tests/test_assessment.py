@@ -281,9 +281,10 @@ def test_groq_path_parses_tool_call():
     assert len(report.dimensions) == 7
     assert len(report.next_steps) == 3
 
-    # The request was shaped as OpenAI-compatible: deepseek model, function-style tool.
+    # The request was shaped as OpenAI-compatible: current Groq production model,
+    # function-style tool.
     call_kwargs = client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["model"] == "deepseek-r1-distill-llama-70b"
+    assert call_kwargs["model"] == "llama-3.3-70b-versatile"
     tools = call_kwargs["tools"]
     assert tools[0]["type"] == "function"
     assert tools[0]["function"]["name"] == "submit_assessment"
