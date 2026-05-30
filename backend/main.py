@@ -49,15 +49,17 @@ app = FastAPI(title="ProofHire Shield API", version="0.1.0", lifespan=lifespan)
 
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
-    # Check Content-Length before the body is buffered into memory.
-    # Streaming/chunked uploads without Content-Length still hit the per-read cap below.
-    cl = request.headers.get("content-length")
-    if cl:
+    # POST endpoints require Content-Length so we can reject oversized bodies BEFORE
+    # buffering them. Without this, a chunked request lacking CL slips straight past.
+    if request.method == "POST":
+        cl = request.headers.get("content-length")
+        if cl is None:
+            return JSONResponse(status_code=411, content={"detail": "Length Required."})
         try:
             if int(cl) > _MAX_UPLOAD_BYTES + 2048:
-                return JSONResponse(status_code=413, content={"detail": "File exceeds 10 MB limit."})
+                return JSONResponse(status_code=413, content={"detail": "Request body exceeds limit."})
         except ValueError:
-            pass
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
     return await call_next(request)
 
 
