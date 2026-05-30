@@ -27,6 +27,7 @@ export interface MatchAnalysis {
   total_skills_found: number
   summary: string
   completeness: CompletenessResult
+  red_flags: string[]
 }
 
 export interface ScanResult {

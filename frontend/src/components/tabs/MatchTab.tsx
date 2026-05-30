@@ -151,6 +151,26 @@ export function MatchTab({ result }: Props) {
         </div>
       )}
 
+      {/* Red flags */}
+      {m.red_flags && m.red_flags.length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
+          <h3 className="mb-3 text-sm font-semibold text-rose-800">
+            Red flags — verify before advancing
+          </h3>
+          <ul className="space-y-2">
+            {m.red_flags.map((flag, i) => (
+              <li key={i} className="flex gap-2 text-sm text-rose-800">
+                <span className="mt-0.5 shrink-0">⚠</span>
+                <span>{flag}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-rose-500">
+            Heuristic signals only — not a hiring decision.
+          </p>
+        </div>
+      )}
+
       <p className="text-xs text-gray-400">
         Skills extracted automatically from CV text using keyword matching.
         Verify all claims directly with the candidate.
