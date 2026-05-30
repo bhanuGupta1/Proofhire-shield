@@ -274,12 +274,14 @@ def _assessment_body():
 
 
 def test_assessment_endpoint_503_without_api_key(monkeypatch):
-    """503 detail must not disclose whether the API key is configured."""
+    """503 detail must not disclose whether EITHER API key is configured."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     r = client.post("/assessment", json=_assessment_body())
     assert r.status_code == 503
     detail = r.json()["detail"]
     assert "ANTHROPIC_API_KEY" not in detail
+    assert "GROQ_API_KEY" not in detail
     assert "temporarily unavailable" in detail.lower()
 
 

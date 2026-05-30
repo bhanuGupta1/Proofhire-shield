@@ -184,9 +184,10 @@ def test_generate_returns_structured_report():
 
 
 def test_generate_raises_when_no_api_key(monkeypatch):
-    """The public AssessmentError message must NOT reveal whether the API key is
+    """The public AssessmentError message must NOT reveal whether either API key is
     configured. The specific reason is logged server-side only."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with pytest.raises(AssessmentError) as excinfo:
         generate_assessment_report(
             cv_safe_copy="x",
@@ -194,6 +195,7 @@ def test_generate_raises_when_no_api_key(monkeypatch):
         )
     public_msg = str(excinfo.value)
     assert "ANTHROPIC_API_KEY" not in public_msg
+    assert "GROQ_API_KEY" not in public_msg
     assert "temporarily unavailable" in public_msg.lower()
 
 
@@ -229,3 +231,94 @@ def test_generate_masks_upstream_failure_message():
     assert "temporarily unavailable" in public_msg.lower()
     # Original exception preserved in the chain for server-side debugging.
     assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+
+# ── Groq / DeepSeek R1 fallback provider ─────────────────────────────────────
+
+def _groq_client_returning(payload_dict):
+    """Build a MagicMock Groq client whose chat.completions.create returns an
+    OpenAI-shaped response with a single tool_calls entry carrying the JSON-encoded
+    payload as its `function.arguments` string."""
+    args_str = json.dumps(payload_dict)
+    function = MagicMock()
+    function.arguments = args_str
+    tool_call = MagicMock()
+    tool_call.function = function
+    message = MagicMock()
+    message.tool_calls = [tool_call]
+    choice = MagicMock()
+    choice.message = message
+    response = MagicMock()
+    response.choices = [choice]
+    client = MagicMock()
+    client.chat.completions.create.return_value = response
+    return client
+
+
+def test_groq_fallback_no_keys(monkeypatch):
+    """Neither key configured → AssessmentError with the masked public message."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(AssessmentError) as excinfo:
+        generate_assessment_report(cv_safe_copy="x", signals=_stub_signals())
+    msg = str(excinfo.value)
+    assert "ANTHROPIC_API_KEY" not in msg
+    assert "GROQ_API_KEY" not in msg
+    assert "temporarily unavailable" in msg.lower()
+
+
+def test_groq_path_parses_tool_call():
+    """Groq provider: OpenAI-shaped tool_calls response → AssessmentReport."""
+    client = _groq_client_returning(_valid_payload())
+    report = generate_assessment_report(
+        cv_safe_copy="Sarah Chen.",
+        signals=_stub_signals(),
+        client=client,
+        provider="groq",
+    )
+    assert report.framework == FRAMEWORK_NAME
+    assert report.overall_score == 78
+    assert len(report.dimensions) == 7
+    assert len(report.next_steps) == 3
+
+    # The request was shaped as OpenAI-compatible: deepseek model, function-style tool.
+    call_kwargs = client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["model"] == "deepseek-r1-distill-llama-70b"
+    tools = call_kwargs["tools"]
+    assert tools[0]["type"] == "function"
+    assert tools[0]["function"]["name"] == "submit_assessment"
+    assert call_kwargs["tool_choice"]["function"]["name"] == "submit_assessment"
+    # System prompt sent as a plain "system" role message (no Anthropic cache_control).
+    sys_msg = call_kwargs["messages"][0]
+    assert sys_msg["role"] == "system"
+    assert "ProofHire v1" in sys_msg["content"]
+
+
+def test_groq_strips_think_tags():
+    """DeepSeek R1's <think>...</think> reasoning tags must be stripped from every
+    string field in the parsed payload before the report is assembled."""
+    payload = _valid_payload()
+    payload["headline"] = "<think>reasoning about candidate</think>actual headline"
+    payload["overall_recommendation"] = (
+        "<think>weighing pros and cons</think>Worth interviewing"
+    )
+    payload["dimensions"][0]["text"] = "<think>...</think>Senior backend engineer."
+    payload["dimensions"][1]["bullets"] = ["<think>...</think>Python", "AWS"]
+    payload["next_steps"][0] = "<think>...</think>Schedule technical interview"
+
+    client = _groq_client_returning(payload)
+    report = generate_assessment_report(
+        cv_safe_copy="cv",
+        signals=_stub_signals(),
+        client=client,
+        provider="groq",
+    )
+    assert "<think>" not in report.headline
+    assert "actual headline" in report.headline
+    assert "<think>" not in report.overall_recommendation
+    assert "Worth interviewing" in report.overall_recommendation
+    assert "<think>" not in report.dimensions[0].text
+    assert "Senior backend engineer." in report.dimensions[0].text
+    assert report.dimensions[1].bullets[0] == "Python"
+    assert "<think>" not in report.next_steps[0]
+    assert "Schedule technical interview" in report.next_steps[0]

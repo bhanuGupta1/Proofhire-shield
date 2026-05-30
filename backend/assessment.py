@@ -1,36 +1,45 @@
 """
 Assessment report generator — ProofHire v1 framework.
 
-Calls the Anthropic Claude API with server-derived structured signals + candidate
-text (safe-copy) and returns a structured assessment under our own ProofHire v1
-framework. Zero coupling to HireIQ's proprietary methodology.
+Calls a Claude-class LLM with server-derived structured signals + candidate text
+(safe-copy) and returns a structured assessment under our own ProofHire v1 framework.
+Zero coupling to HireIQ's proprietary methodology.
 
-Defence-in-depth on prompt injection (informed by the Phase-2 Codex review):
+Provider selection (env-driven, in order of preference):
+  1. ANTHROPIC_API_KEY → Anthropic Claude (default Sonnet, prompt-caching enabled).
+  2. GROQ_API_KEY → Groq running DeepSeek R1 (free-tier fallback, no card required).
+  3. neither → AssessmentError (endpoint returns 503).
+
+Defence-in-depth on prompt injection (informed by the Phase-2 Codex reviews):
 - All user-derived content is wrapped in delimited blocks: <signals>, <cv>, <role>.
 - Every user-derived string has its `&`, `<`, `>` HTML-entity-escaped so no closing
   delimiter inside the data can break out of its wrapper.
-- The system prompt instructs Claude that ALL three blocks contain untrusted DATA
+- The system prompt instructs the model that ALL three blocks contain untrusted DATA
   and that any imperative-looking text inside them must be reported, not honoured.
 - Structured signals are JSON-encoded inside <signals> — clear data shape, not prose.
 - Caller is responsible for passing the SERVER-scrubbed safe_copy as `cv_safe_copy`
   and SERVER-derived signals; we never accept client-supplied trust claims.
-- The Anthropic call uses a tool with a strict JSON schema; we read only the
-  structured tool input, never raw model prose.
-- Upstream SDK failures are masked into a generic public message; the original is
-  preserved in the chained exception for server-side logging.
+- Both providers use a tool with a strict JSON schema; we read only the structured
+  tool input, never raw model prose.
+- Upstream SDK failures and missing-key diagnostics are masked into a single generic
+  public message; specifics are logged server-side via logger.warning.
+- For Groq / DeepSeek R1: any <think>...</think> reasoning tags that leak into the
+  tool-call arguments are stripped from every string field before parsing.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 FRAMEWORK_NAME = "ProofHire v1 — heuristic scoring"
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+_DEFAULT_GROQ_MODEL = "deepseek-r1-distill-llama-70b"
 _MAX_TOKENS = 4096
 
 _SYSTEM_PROMPT = (
@@ -126,8 +135,8 @@ class AssessmentReport:
 
 
 class AssessmentError(Exception):
-    """Raised when an assessment cannot be produced (no API key, upstream failure,
-    malformed model response). The endpoint maps this to HTTP 503."""
+    """Raised when an assessment cannot be produced (no key, no provider configured,
+    upstream failure, malformed model response). Endpoint maps this to HTTP 503."""
 
 
 def _escape_for_prompt(text: str) -> str:
@@ -186,26 +195,38 @@ def _payload_to_report(payload: dict) -> AssessmentReport:
     )
 
 
-def generate_assessment_report(
+# ── DeepSeek R1 reasoning-tag stripping ──────────────────────────────────────
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think_tags(text: str) -> str:
+    return _THINK_TAG_RE.sub("", text).strip()
+
+
+def _strip_think_tags_in_payload(obj: Any) -> Any:
+    """Recursively remove <think>...</think> blocks from every string value."""
+    if isinstance(obj, str):
+        return _strip_think_tags(obj)
+    if isinstance(obj, dict):
+        return {k: _strip_think_tags_in_payload(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_think_tags_in_payload(v) for v in obj]
+    return obj
+
+
+# ── Provider implementations ─────────────────────────────────────────────────
+
+def _generate_with_anthropic(
     cv_safe_copy: str,
     signals: dict,
-    *,
-    role_context: str | None = None,
-    client: Any = None,
-    model: str = _DEFAULT_MODEL,
+    role_context: str | None,
+    client: Any,
+    model: str | None,
 ) -> AssessmentReport:
-    """Produce a structured candidate assessment via Claude.
-
-    `cv_safe_copy` must be the SERVER-scrubbed safe_copy (never the raw original_text
-    or client-supplied text). `signals` must be the SERVER-derived structured signals
-    dict (never client-supplied trust claims). Inject `client` (an anthropic.Anthropic
-    instance) to stub the SDK in tests.
-    """
     if client is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            # Log specifics for the operator; return a generic public message so we
-            # never reveal server configuration state to unauthenticated callers.
             logger.warning("ANTHROPIC_API_KEY is not configured")
             raise AssessmentError("Assessment service is temporarily unavailable.")
         try:
@@ -216,10 +237,11 @@ def generate_assessment_report(
         client = anthropic.Anthropic(api_key=api_key)
 
     user_message = _build_user_message(cv_safe_copy, signals, role_context)
+    used_model = model or _DEFAULT_ANTHROPIC_MODEL
 
     try:
         response = client.messages.create(
-            model=model,
+            model=used_model,
             max_tokens=_MAX_TOKENS,
             system=[
                 {
@@ -239,9 +261,7 @@ def generate_assessment_report(
             messages=[{"role": "user", "content": user_message}],
         )
     except Exception as exc:
-        # Log the full error server-side; return a generic public message so we
-        # never leak provider/auth/quota state to unauthenticated callers.
-        logger.warning("Upstream LLM call failed", exc_info=True)
+        logger.warning("Upstream Anthropic call failed", exc_info=True)
         raise AssessmentError("Assessment service is temporarily unavailable.") from exc
 
     for block in getattr(response, "content", []) or []:
@@ -249,3 +269,114 @@ def generate_assessment_report(
             payload = getattr(block, "input", None) or {}
             return _payload_to_report(payload)
     raise AssessmentError("Model did not return a structured tool call.")
+
+
+def _generate_with_groq(
+    cv_safe_copy: str,
+    signals: dict,
+    role_context: str | None,
+    client: Any,
+    model: str | None,
+) -> AssessmentReport:
+    if client is None:
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            logger.warning("GROQ_API_KEY is not configured")
+            raise AssessmentError("Assessment service is temporarily unavailable.")
+        try:
+            from groq import Groq  # type: ignore
+        except ImportError as exc:
+            logger.warning("groq SDK is not installed", exc_info=True)
+            raise AssessmentError("Assessment service is temporarily unavailable.") from exc
+        client = Groq(api_key=api_key)
+
+    user_message = _build_user_message(cv_safe_copy, signals, role_context)
+    used_model = model or _DEFAULT_GROQ_MODEL
+
+    try:
+        response = client.chat.completions.create(
+            model=used_model,
+            max_tokens=_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "submit_assessment",
+                        "description": "Submit the structured ProofHire v1 candidate assessment.",
+                        "parameters": _ASSESSMENT_TOOL_SCHEMA,
+                    },
+                }
+            ],
+            tool_choice={"type": "function", "function": {"name": "submit_assessment"}},
+        )
+    except Exception as exc:
+        logger.warning("Upstream Groq call failed", exc_info=True)
+        raise AssessmentError("Assessment service is temporarily unavailable.") from exc
+
+    choices = getattr(response, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    tool_calls = getattr(message, "tool_calls", None) or [] if message is not None else []
+    if not tool_calls:
+        raise AssessmentError("Model did not return a structured tool call.")
+    args_str = getattr(getattr(tool_calls[0], "function", None), "arguments", "")
+    try:
+        payload = json.loads(args_str) if isinstance(args_str, str) else {}
+    except (TypeError, ValueError) as exc:
+        logger.warning("Groq tool call arguments not valid JSON", exc_info=True)
+        raise AssessmentError("Assessment service is temporarily unavailable.") from exc
+
+    # DeepSeek R1 can emit <think>...</think> reasoning blocks even inside structured
+    # tool args. Strip them from every string in the payload before report assembly.
+    payload = _strip_think_tags_in_payload(payload)
+    return _payload_to_report(payload)
+
+
+# ── Public entry point ───────────────────────────────────────────────────────
+
+def generate_assessment_report(
+    cv_safe_copy: str,
+    signals: dict,
+    *,
+    role_context: str | None = None,
+    client: Any = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> AssessmentReport:
+    """Produce a structured candidate assessment.
+
+    Provider selection (when `provider` is None):
+      - if `client` is supplied → "anthropic" (back-compat: existing tests inject
+        an Anthropic-shaped mock without specifying a provider);
+      - elif `ANTHROPIC_API_KEY` is set → "anthropic";
+      - elif `GROQ_API_KEY` is set → "groq" (DeepSeek R1, free-tier fallback);
+      - else → AssessmentError (generic public message).
+
+    `cv_safe_copy` MUST be the SERVER-scrubbed safe_copy. `signals` MUST be the
+    SERVER-derived structured signals dict. Inject `client` to stub the SDK in tests;
+    set `provider` explicitly when stubbing the Groq path.
+    """
+    if provider is None:
+        if client is not None:
+            provider = "anthropic"
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            provider = "anthropic"
+        elif os.environ.get("GROQ_API_KEY"):
+            provider = "groq"
+        else:
+            logger.warning(
+                "No assessment provider configured (no ANTHROPIC_API_KEY or GROQ_API_KEY)"
+            )
+            raise AssessmentError("Assessment service is temporarily unavailable.")
+
+    logger.info("Generating assessment via provider=%s", provider)
+
+    if provider == "anthropic":
+        return _generate_with_anthropic(cv_safe_copy, signals, role_context, client, model)
+    if provider == "groq":
+        return _generate_with_groq(cv_safe_copy, signals, role_context, client, model)
+    logger.warning("Unknown assessment provider: %r", provider)
+    raise AssessmentError("Assessment service is temporarily unavailable.")
