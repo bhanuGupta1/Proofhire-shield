@@ -294,6 +294,32 @@ def test_groq_path_parses_tool_call():
     assert "ProofHire v1" in sys_msg["content"]
 
 
+def test_env_only_groq_dispatches_to_groq_path(monkeypatch):
+    """ANTHROPIC_API_KEY unset + GROQ_API_KEY set + no client injected → the
+    dispatcher must route to the Groq provider function (not raise, not call
+    Anthropic). This is the production fallback path on HF Spaces."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-test")
+
+    stub_report = _payload_to_report(_valid_payload())
+    captured: dict = {}
+
+    def fake_groq(cv_safe_copy, signals, role_context, client, model):
+        captured["called"] = True
+        captured["client"] = client
+        return stub_report
+
+    monkeypatch.setattr("assessment._generate_with_groq", fake_groq)
+
+    report = generate_assessment_report(cv_safe_copy="cv", signals=_stub_signals())
+
+    assert captured.get("called") is True
+    # No client was injected; the provider function received None (it would build
+    # a real groq client from GROQ_API_KEY in production).
+    assert captured.get("client") is None
+    assert report.framework == FRAMEWORK_NAME
+
+
 def test_groq_strips_think_tags():
     """DeepSeek R1's <think>...</think> reasoning tags must be stripped from every
     string field in the parsed payload before the report is assembled."""

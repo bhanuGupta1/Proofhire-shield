@@ -372,7 +372,8 @@ def generate_assessment_report(
             )
             raise AssessmentError("Assessment service is temporarily unavailable.")
 
-    logger.info("Generating assessment via provider=%s", provider)
+    # Logged at INFO so HF Spaces / CloudWatch can confirm which branch ran.
+    logger.info("Assessment provider: %s", provider)
 
     if provider == "anthropic":
         return _generate_with_anthropic(cv_safe_copy, signals, role_context, client, model)
