@@ -9,4 +9,7 @@ COPY . .
 
 EXPOSE 8000
 
+# Run as a non-root user — HF Spaces (Docker SDK) runs containers as UID 1000.
+USER 1000
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
