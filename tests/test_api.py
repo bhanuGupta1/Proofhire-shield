@@ -185,3 +185,78 @@ def test_trust_report_bad_file_returns_400():
     r = _post_file(content=b"garbage", filename="bad.pdf",
                    content_type="application/pdf", endpoint="/trust-report")
     assert r.status_code == 400
+
+
+# ── Match analysis via /scan-cv (D1) ─────────────────────────────────────────
+
+def test_match_analysis_no_skills():
+    r = _post_file(content=b"Sarah is a thoughtful candidate seeking work in a kind organisation.",
+                   filename="cv.txt", content_type="text/plain")
+    assert r.status_code == 200
+    m = r.json()["result"]["match_analysis"]
+    assert m["total_skills_found"] == 0
+    assert m["experience_tier"] == "Entry"
+
+
+def test_match_analysis_senior_cv():
+    text = "Senior Engineer at Xero. 8 years experience. Python, AWS, Docker."
+    r = _post_file(content=text.encode(), filename="cv.txt", content_type="text/plain")
+    assert r.status_code == 200
+    m = r.json()["result"]["match_analysis"]
+    assert m["experience_tier"] == "Senior"
+    assert m["years_experience"] == 8
+
+
+def test_completeness_full_cv_via_api():
+    text = (
+        "Sarah Chen — Senior Software Engineer\n"
+        "sarah.chen@example.com | +64 21 555 0101 | linkedin.com/in/sarahc | github.com/sarahc\n"
+        "Xero (2020 - present) — Senior Engineer\n"
+        "Built billing API, reduced p99 latency 420ms->95ms.\n"
+        "Skills: Python, Django, FastAPI, PostgreSQL, AWS, Docker, Kubernetes, Redis.\n"
+        + ("word " * 320)
+    )
+    r = _post_file(content=text.encode(), filename="cv.txt", content_type="text/plain")
+    assert r.status_code == 200
+    m = r.json()["result"]["match_analysis"]
+    assert m["completeness"]["score"] >= 70
+
+
+def test_red_flags_broad_stack_via_api():
+    text = (
+        "1 year of experience. Skills: Python, JavaScript, TypeScript, Java, C#, Go, "
+        "Rust, Ruby, PHP, Swift, Kotlin, Scala, R, SQL, React, Vue, Angular, Django."
+    )
+    r = _post_file(content=text.encode(), filename="cv.txt", content_type="text/plain")
+    assert r.status_code == 200
+    m = r.json()["result"]["match_analysis"]
+    assert any("broad tech stack" in f.lower() for f in m["red_flags"])
+
+
+def test_candidate_summary_nonempty_via_api():
+    r = _post_file(DEMO_DIR / "01_clean.pdf")
+    assert r.status_code == 200
+    m = r.json()["result"]["match_analysis"]
+    assert isinstance(m["summary"], str)
+    assert m["summary"]
+
+
+# ── /match-jd endpoint ───────────────────────────────────────────────────────
+
+def test_match_jd_endpoint_returns_score():
+    r = client.post("/match-jd", json={"cv_text": "Python, AWS, Docker.", "jd_text": "Need Python."})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["match_score"] >= 70
+    assert "Python" in body["matched_skills"]
+
+
+def test_match_jd_empty_text_rejected():
+    r = client.post("/match-jd", json={"cv_text": "", "jd_text": "Need Python."})
+    assert r.status_code == 422
+
+
+def test_match_jd_oversized_text_rejected():
+    big = "x" * 20001
+    r = client.post("/match-jd", json={"cv_text": big, "jd_text": "Need Python."})
+    assert r.status_code == 422
