@@ -22,6 +22,7 @@ from models import (
     ScanResponse,
     ScanResult,
 )
+from dataclasses import asdict
 from jd_match import match_cv_to_jd
 from assessment import AssessmentError, generate_assessment_report
 from scanner import compute_risk, scan_text
@@ -211,15 +212,34 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
 def assessment_endpoint(req: AssessmentRequest) -> AssessmentReportModel:
     """Generate a structured ProofHire v1 candidate assessment via Claude.
 
-    Requires ANTHROPIC_API_KEY to be configured on the server. Returns 503 if not.
-    Inputs are Phase-1 outputs: cv_text (use safe_copy_text from /scan-cv),
-    the match_analysis block, and a compact risk_signals block.
+    Re-runs the Phase-1 scanner + heuristic engine on `cv_text` server-side, so
+    the structured signals sent to Claude are SERVER-derived and tamper-free.
+    The scrubbed `safe_copy_text` (not the raw input) is what reaches the model.
+    Requires ANTHROPIC_API_KEY on the server; returns 503 otherwise.
     """
+    # Re-derive everything server-side. Never trust client-supplied signals.
+    injection, pii, ai_score = scan_text(req.cv_text)
+    risk_level, risk_score = compute_risk(injection, pii, ai_score)
+    match = analyze_match(req.cv_text)
+    safe_copy = generate_safe_copy(req.cv_text, injection, pii)
+    if ai_score >= 0.6:
+        ai_label = "LIKELY"
+    elif ai_score >= 0.3:
+        ai_label = "POSSIBLE"
+    else:
+        ai_label = "UNLIKELY"
+    signals = {
+        "risk_level": risk_level,
+        "risk_score": risk_score,
+        "injection_count": len(injection),
+        "ai_text_likelihood": ai_label,
+        "match": asdict(match),
+    }
+
     try:
         report = generate_assessment_report(
-            cv_text=req.cv_text,
-            match_analysis=req.match_analysis.model_dump(),
-            risk_signals=req.risk_signals.model_dump(),
+            cv_safe_copy=safe_copy,
+            signals=signals,
             role_context=req.role_context,
         )
     except AssessmentError as exc:
