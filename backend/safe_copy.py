@@ -11,6 +11,7 @@ Two-pass removal strategy:
 PII is annotated (not silently removed) so the recruiter sees what was flagged.
 """
 from __future__ import annotations
+import bisect
 from models import PromptInjectionFinding, PIIFinding
 from scanner import _INJECTION_PATTERNS, _PII_PATTERNS, _strip_zero_width, _apply_homoglyphs
 
@@ -30,21 +31,26 @@ def generate_safe_copy(
     # ── Pass 1: span-based multi-line removal ────────────────────────────────
     lines = text.split("\n")
 
-    # Pre-compute the character-offset start of each line in the full string.
+    # Pre-compute the start AND end offset of each line in the full string.
     line_starts: list[int] = []
+    line_ends: list[int] = []
     pos = 0
     for line in lines:
         line_starts.append(pos)
+        line_ends.append(pos + len(line))
         pos += len(line) + 1  # +1 for the \n separator
 
     lines_to_remove: set[int] = set()
     for pattern in _INJECTION_PATTERNS:
         for m in pattern.regex.finditer(text):
             ms, me = m.start(), m.end()
-            for idx, ls in enumerate(line_starts):
-                le = ls + len(lines[idx])
-                if ls <= me and le >= ms:          # line overlaps the match span
-                    lines_to_remove.add(idx)
+            # Lines whose range overlaps [ms, me]: ls <= me AND le >= ms. bisect
+            # gives the window of overlapping indexes in O(log N), avoiding the
+            # earlier O(matches * lines) blow-up on adversarial inputs.
+            lo = bisect.bisect_left(line_ends, ms)
+            hi = bisect.bisect_right(line_starts, me)
+            for idx in range(lo, hi):
+                lines_to_remove.add(idx)
 
     after_pass1: list[str] = []
     for idx, line in enumerate(lines):
