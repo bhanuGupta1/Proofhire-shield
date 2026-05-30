@@ -34,15 +34,10 @@ export async function generateAssessment(
   result: ScanResult,
   roleContext?: string,
 ): Promise<AssessmentReport> {
+  // Send the original text — the server re-runs the Phase-1 pipeline so its
+  // structured signals come from authoritative server state, not from us.
   const body = {
-    cv_text: result.safe_copy_text,
-    match_analysis: result.match_analysis,
-    risk_signals: {
-      risk_level: result.risk_level,
-      risk_score: result.risk_score,
-      injection_count: result.prompt_injection_findings.length,
-      ai_text_likelihood: result.ai_text_likelihood,
-    },
+    cv_text: result.original_text,
     role_context: roleContext ?? null,
   }
   const res = await fetch(`${API_BASE}/assessment`, {
