@@ -204,14 +204,15 @@ def generate_assessment_report(
     if client is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            raise AssessmentError(
-                "ANTHROPIC_API_KEY is not configured. Set the environment variable "
-                "to enable assessment generation."
-            )
+            # Log specifics for the operator; return a generic public message so we
+            # never reveal server configuration state to unauthenticated callers.
+            logger.warning("ANTHROPIC_API_KEY is not configured")
+            raise AssessmentError("Assessment service is temporarily unavailable.")
         try:
             import anthropic  # type: ignore
         except ImportError as exc:
-            raise AssessmentError("anthropic SDK is not installed.") from exc
+            logger.warning("anthropic SDK is not installed", exc_info=True)
+            raise AssessmentError("Assessment service is temporarily unavailable.") from exc
         client = anthropic.Anthropic(api_key=api_key)
 
     user_message = _build_user_message(cv_safe_copy, signals, role_context)

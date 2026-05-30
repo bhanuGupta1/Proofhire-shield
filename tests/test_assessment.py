@@ -184,12 +184,17 @@ def test_generate_returns_structured_report():
 
 
 def test_generate_raises_when_no_api_key(monkeypatch):
+    """The public AssessmentError message must NOT reveal whether the API key is
+    configured. The specific reason is logged server-side only."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(AssessmentError, match="ANTHROPIC_API_KEY"):
+    with pytest.raises(AssessmentError) as excinfo:
         generate_assessment_report(
             cv_safe_copy="x",
             signals=_stub_signals(),
         )
+    public_msg = str(excinfo.value)
+    assert "ANTHROPIC_API_KEY" not in public_msg
+    assert "temporarily unavailable" in public_msg.lower()
 
 
 def test_generate_raises_when_response_has_no_tool_call():
