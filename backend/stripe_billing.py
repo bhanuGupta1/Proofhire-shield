@@ -39,12 +39,24 @@ class BillingError(Exception):
     """Stripe is unconfigured or an upstream Stripe call failed. Endpoint → HTTP 503."""
 
 
+class WebhookError(Exception):
+    """A webhook request failed signature/payload verification. Endpoint → HTTP 400.
+
+    Distinct from BillingError on purpose: a bad signature is a *client* error
+    (forged / unsigned / malformed) that Stripe must not retry, whereas an
+    unconfigured webhook secret is a *server* condition (→ 503) that it should."""
+
+
 def _secret_key() -> str | None:
     return os.environ.get("STRIPE_SECRET_KEY")
 
 
 def _price_id() -> str | None:
     return os.environ.get("STRIPE_PRICE_ID")
+
+
+def _webhook_secret() -> str | None:
+    return os.environ.get("STRIPE_WEBHOOK_SECRET")
 
 
 def is_billing_configured() -> bool:
@@ -69,6 +81,18 @@ def _portal_return_url() -> str:
     return os.environ.get("BILLING_PORTAL_RETURN_URL") or f"{_base_url()}/"
 
 
+def _import_stripe() -> Any:
+    """Import the Stripe SDK. Raises BillingError (→ 503) when it is not installed.
+    Shared by the api-key path (_load_stripe) and webhook verification, which
+    needs the SDK but not the secret key."""
+    try:
+        import stripe  # type: ignore
+    except ImportError as exc:
+        logger.warning("stripe SDK is not installed", exc_info=True)
+        raise BillingError("Billing is not configured.") from exc
+    return stripe
+
+
 def _load_stripe() -> Any:
     """Lazy-import the SDK and set the api key from the env. Raises BillingError
     (→ 503) when the key is missing or the package is not installed."""
@@ -76,11 +100,7 @@ def _load_stripe() -> Any:
     if not key:
         logger.warning("STRIPE_SECRET_KEY is not configured")
         raise BillingError("Billing is not configured.")
-    try:
-        import stripe  # type: ignore
-    except ImportError as exc:
-        logger.warning("stripe SDK is not installed", exc_info=True)
-        raise BillingError("Billing is not configured.") from exc
+    stripe = _import_stripe()
     stripe.api_key = key
     return stripe
 
@@ -142,3 +162,28 @@ def create_portal_session(*, customer_id: str) -> str:
         logger.warning("Stripe billing portal session creation failed", exc_info=True)
         raise BillingError("Could not open the billing portal.") from exc
     return _session_url(session)
+
+
+def verify_and_parse_event(payload: bytes, sig_header: str | None) -> Any:
+    """Verify a Stripe webhook signature and return the parsed Event.
+
+    - BillingError (→ 503) when STRIPE_WEBHOOK_SECRET is unset: the event may be
+      genuine but we are not configured to trust it yet, so Stripe should retry.
+    - WebhookError (→ 400) when the signature header is missing or verification
+      fails: the request is unsigned / forged / malformed and must NOT be retried.
+
+    Signature verification needs only the signing secret and the raw body, never
+    the api key, so this path imports the SDK without _load_stripe.
+    """
+    secret = _webhook_secret()
+    if not secret:
+        logger.warning("STRIPE_WEBHOOK_SECRET is not configured")
+        raise BillingError("Billing webhook is not configured.")
+    if not sig_header:
+        raise WebhookError("Missing Stripe-Signature header.")
+    stripe = _import_stripe()
+    try:
+        return stripe.Webhook.construct_event(payload, sig_header, secret)
+    except Exception as exc:
+        logger.warning("Stripe webhook signature verification failed", exc_info=True)
+        raise WebhookError("Invalid webhook signature.") from exc

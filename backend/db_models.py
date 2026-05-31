@@ -125,3 +125,20 @@ class Subscription(Base):
     updated_at = Column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
     )
+
+
+class WebhookEvent(Base):
+    """Stripe webhook idempotency ledger (Phase 7.5).
+
+    Stripe re-delivers an event until it receives a 2xx, so the same `evt_...`
+    id can arrive more than once. We record every event id we have fully
+    processed and skip any we have already seen, which makes the webhook handler
+    idempotent. No business data lives here — just the id, its type, and when we
+    first saw it.
+    """
+
+    __tablename__ = "webhook_events"
+
+    event_id = Column(String(64), primary_key=True)
+    event_type = Column(String(64), nullable=False)
+    received_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)

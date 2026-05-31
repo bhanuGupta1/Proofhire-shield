@@ -7,6 +7,7 @@ import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,14 +40,16 @@ from trust_report import build_trust_report
 from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
-from db_models import Assessment, Scan, Subscription
+from db_models import Assessment, Scan, Subscription, WebhookEvent
 from auth import get_current_user, get_current_user_optional, get_current_org_optional
 from billing import FREE_SCAN_LIMIT, is_pro, scans_used_this_month
 from stripe_billing import (
     BillingError,
+    WebhookError,
     create_checkout_session,
     create_portal_session,
     is_billing_configured,
+    verify_and_parse_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -598,6 +601,150 @@ def billing_status(
         current_period_end=period_end,
         status=sub.status if sub is not None else None,
     )
+
+
+# ── Phase 7.5: Stripe webhook ────────────────────────────────────
+# Runs server-to-server from Stripe (no Clerk JWT) — verify_and_parse_event is
+# the authentication. Handlers UPSERT the per-user Subscription row with absolute
+# values, so re-applying a change is harmless; the webhook_events ledger also
+# short-circuits any event id already processed.
+_SUBSCRIPTION_EVENTS = {
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+}
+
+
+def _period_end_to_datetime(value: object) -> datetime | None:
+    """Stripe sends current_period_end as a unix timestamp; store it tz-aware UTC.
+    Returns None for a missing/garbage value rather than raising."""
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _apply_subscription_event(db: Session, obj: dict) -> None:
+    """Upsert the caller's Subscription row from a Stripe subscription object.
+
+    Resolves the user by the user_id stamped into subscription metadata at
+    checkout, falling back to a lookup by Stripe customer id. An event we cannot
+    map is ignored (logged) so Stripe still receives its 2xx."""
+    metadata = obj.get("metadata") or {}
+    user_id = metadata.get("user_id")
+    customer_id = obj.get("customer")
+    status = obj.get("status")
+    sub_id = obj.get("id")
+    period_end = _period_end_to_datetime(obj.get("current_period_end"))
+
+    sub = None
+    if user_id:
+        sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if sub is None and customer_id:
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.stripe_customer_id == customer_id)
+            .first()
+        )
+        if sub is not None:
+            user_id = sub.user_id
+
+    if not user_id or not customer_id or not status:
+        logger.warning("Subscription webhook could not be mapped to a user; ignoring")
+        return
+
+    if sub is None:
+        sub = Subscription(
+            user_id=user_id, stripe_customer_id=customer_id, status=status
+        )
+        db.add(sub)
+    sub.stripe_customer_id = customer_id
+    if sub_id:
+        sub.stripe_subscription_id = sub_id
+    sub.status = status
+    sub.current_period_end = period_end
+    sub.plan = "pro"
+
+
+def _apply_checkout_completed(db: Session, obj: dict) -> None:
+    """Capture the Stripe customer id from a completed Checkout Session so the
+    billing portal works even before the first subscription event lands. Does not
+    set an active status — that arrives via subscription events; a fresh row is
+    parked as 'incomplete' (is_pro treats it as not Pro)."""
+    user_id = obj.get("client_reference_id") or (obj.get("metadata") or {}).get(
+        "user_id"
+    )
+    customer_id = obj.get("customer")
+    sub_id = obj.get("subscription")
+    if not user_id or not customer_id:
+        logger.warning("checkout.session.completed missing user/customer; ignoring")
+        return
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if sub is None:
+        db.add(
+            Subscription(
+                user_id=user_id,
+                stripe_customer_id=customer_id,
+                stripe_subscription_id=sub_id,
+                status="incomplete",
+            )
+        )
+    else:
+        sub.stripe_customer_id = customer_id
+        if sub_id:
+            sub.stripe_subscription_id = sub_id
+
+
+@app.post("/billing/webhook")
+async def billing_webhook(
+    request: Request,
+    db: Session | None = Depends(get_db),
+) -> dict:
+    """Receive Stripe billing webhooks (Phase 7.5).
+
+    UNAUTHENTICATED by design — the Stripe signature is the authentication, so
+    there is no Clerk dependency. Verifies the signature over the raw body against
+    STRIPE_WEBHOOK_SECRET, then idempotently applies subscription lifecycle
+    changes. 400 → bad/forged signature (Stripe must not retry); 503 → webhook
+    secret or DB unconfigured (Stripe should retry)."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    try:
+        event = verify_and_parse_event(payload, sig_header)
+    except WebhookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except BillingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    event_id = event.get("id")
+    event_type = event.get("type")
+    if not event_id or not event_type:
+        raise HTTPException(status_code=400, detail="Malformed event.")
+
+    already = (
+        db.query(WebhookEvent).filter(WebhookEvent.event_id == event_id).first()
+    )
+    if already is not None:
+        return {"received": True, "duplicate": True}
+
+    obj = (event.get("data") or {}).get("object") or {}
+    if event_type in _SUBSCRIPTION_EVENTS:
+        _apply_subscription_event(db, obj)
+    elif event_type == "checkout.session.completed":
+        _apply_checkout_completed(db, obj)
+
+    db.add(WebhookEvent(event_id=event_id, event_type=event_type))
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Failed to record billing webhook")
+        raise HTTPException(status_code=503, detail="Could not record event.")
+    return {"received": True}
 
 
 def _sanitise_filename(name: str) -> str:

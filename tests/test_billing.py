@@ -343,3 +343,68 @@ def test_create_portal_session_masks_sdk_error(monkeypatch):
     monkeypatch.setattr(stripe.billing_portal.Session, "create", staticmethod(boom))
     with pytest.raises(BillingError):
         create_portal_session(customer_id="cus_existing")
+
+
+
+# ── Phase 7.5: webhook signature verification + idempotency ledger ───────────
+
+def test_webhook_events_table_present(db_session):
+    insp = inspect(db_session.get_bind())
+    assert "webhook_events" in insp.get_table_names()
+
+
+def test_webhook_events_columns_and_pk(db_session):
+    insp = inspect(db_session.get_bind())
+    cols = {c["name"] for c in insp.get_columns("webhook_events")}
+    assert cols == {"event_id", "event_type", "received_at"}
+    pk = insp.get_pk_constraint("webhook_events")
+    assert pk["constrained_columns"] == ["event_id"]
+
+
+def test_verify_event_raises_billingerror_when_secret_unset(monkeypatch):
+    from stripe_billing import verify_and_parse_event
+
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    with pytest.raises(BillingError):
+        verify_and_parse_event(b"{}", "t=1,v1=abc")
+
+
+def test_verify_event_raises_webhookerror_when_signature_missing(monkeypatch):
+    from stripe_billing import WebhookError, verify_and_parse_event
+
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
+    with pytest.raises(WebhookError):
+        verify_and_parse_event(b"{}", None)
+
+
+def test_verify_event_raises_webhookerror_on_invalid_signature(monkeypatch):
+    import stripe
+
+    from stripe_billing import WebhookError, verify_and_parse_event
+
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
+
+    def boom(payload, sig_header, secret):
+        raise Exception("signature mismatch")
+
+    monkeypatch.setattr(stripe.Webhook, "construct_event", staticmethod(boom))
+    with pytest.raises(WebhookError):
+        verify_and_parse_event(b"{}", "t=1,v1=bad")
+
+
+def test_verify_event_returns_parsed_event_and_forwards_args(monkeypatch):
+    import stripe
+
+    from stripe_billing import verify_and_parse_event
+
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
+    seen = {}
+
+    def ok(payload, sig_header, secret):
+        seen["args"] = (payload, sig_header, secret)
+        return {"id": "evt_1", "type": "checkout.session.completed"}
+
+    monkeypatch.setattr(stripe.Webhook, "construct_event", staticmethod(ok))
+    event = verify_and_parse_event(b'{"x":1}', "t=1,v1=ok")
+    assert event["id"] == "evt_1"
+    assert seen["args"] == (b'{"x":1}', "t=1,v1=ok", "whsec_dummy")

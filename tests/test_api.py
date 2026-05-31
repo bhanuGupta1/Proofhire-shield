@@ -1390,3 +1390,233 @@ def test_portal_503_when_billing_unconfigured(client_with_db_and_auth, monkeypat
 def test_portal_503_without_db(client_with_auth_only):
     r = client_with_auth_only.post("/billing/portal")
     assert r.status_code == 503
+
+
+
+# ── Phase 7.5: billing webhook (/billing/webhook) ────────────────────────────
+
+def _post_webhook(client, event, *, monkeypatch, sig="t=1,v1=sig"):
+    """POST a Stripe event through /billing/webhook with verify_and_parse_event
+    stubbed to return `event`, so the test exercises dispatch + idempotency
+    rather than the SDK signature math (that is unit-tested in test_billing.py)."""
+    import main as main_module
+
+    monkeypatch.setattr(
+        main_module, "verify_and_parse_event", lambda payload, sig_header: event
+    )
+    return client.post(
+        "/billing/webhook",
+        content=b'{"stub": true}',
+        headers={"stripe-signature": sig},
+    )
+
+
+def _sub_event(event_id, event_type, *, user_id, customer, sub_id, status, days):
+    from datetime import datetime, timedelta, timezone
+
+    period = int((datetime.now(timezone.utc) + timedelta(days=days)).timestamp())
+    return {
+        "id": event_id,
+        "type": event_type,
+        "data": {
+            "object": {
+                "id": sub_id,
+                "customer": customer,
+                "status": status,
+                "current_period_end": period,
+                "metadata": {"user_id": user_id},
+            }
+        },
+    }
+
+
+def test_webhook_503_without_db(client_with_auth_only):
+    # No DB -> 503 before any signature work happens.
+    r = client_with_auth_only.post(
+        "/billing/webhook", content=b"{}", headers={"stripe-signature": "x"}
+    )
+    assert r.status_code == 503
+
+
+def test_webhook_400_on_bad_signature(client_with_db, monkeypatch):
+    import main as main_module
+    from stripe_billing import WebhookError
+
+    def bad(payload, sig_header):
+        raise WebhookError("Invalid webhook signature.")
+
+    monkeypatch.setattr(main_module, "verify_and_parse_event", bad)
+    r = client_with_db.post(
+        "/billing/webhook", content=b"{}", headers={"stripe-signature": "bad"}
+    )
+    assert r.status_code == 400
+
+
+def test_webhook_503_when_secret_unconfigured(client_with_db, monkeypatch):
+    import main as main_module
+    from stripe_billing import BillingError
+
+    def unconfigured(payload, sig_header):
+        raise BillingError("Billing webhook is not configured.")
+
+    monkeypatch.setattr(main_module, "verify_and_parse_event", unconfigured)
+    r = client_with_db.post(
+        "/billing/webhook", content=b"{}", headers={"stripe-signature": "x"}
+    )
+    assert r.status_code == 503
+
+
+def test_webhook_requires_no_auth(client_with_db, db_session, monkeypatch):
+    # client_with_db has NO auth override; a valid event still processes (200).
+    event = _sub_event(
+        "evt_noauth", "customer.subscription.updated",
+        user_id="user_webhook", customer="cus_1", sub_id="sub_1",
+        status="active", days=30,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    assert r.json()["received"] is True
+
+
+def test_webhook_subscription_created_makes_user_pro(client_with_db, db_session, monkeypatch):
+    from billing import is_pro
+    from db_models import Subscription
+
+    event = _sub_event(
+        "evt_active", "customer.subscription.created",
+        user_id="user_pro", customer="cus_42", sub_id="sub_42",
+        status="active", days=30,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    sub = db_session.query(Subscription).filter_by(user_id="user_pro").first()
+    assert sub is not None
+    assert sub.status == "active"
+    assert sub.stripe_customer_id == "cus_42"
+    assert sub.stripe_subscription_id == "sub_42"
+    assert is_pro("user_pro", db_session) is True
+
+
+def test_webhook_subscription_deleted_cancels(client_with_db, db_session, monkeypatch):
+    from billing import is_pro
+    from db_models import Subscription
+
+    _make_user_pro(db_session, "user_cancel")
+    db_session.commit()
+    assert is_pro("user_cancel", db_session) is True
+
+    event = _sub_event(
+        "evt_del", "customer.subscription.deleted",
+        user_id="user_cancel", customer="cus_user_cancel", sub_id="sub_user_cancel",
+        status="canceled", days=-1,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    sub = db_session.query(Subscription).filter_by(user_id="user_cancel").first()
+    assert sub.status == "canceled"
+    assert is_pro("user_cancel", db_session) is False
+
+
+def test_webhook_idempotent_duplicate_event_id(client_with_db, db_session, monkeypatch):
+    from db_models import Subscription
+
+    first = _sub_event(
+        "evt_dup", "customer.subscription.updated",
+        user_id="user_dup", customer="cus_d", sub_id="sub_d",
+        status="active", days=30,
+    )
+    r1 = _post_webhook(client_with_db, first, monkeypatch=monkeypatch)
+    assert r1.status_code == 200
+    assert r1.json().get("duplicate") is None
+
+    # Same event id, payload that WOULD cancel if reprocessed.
+    second = _sub_event(
+        "evt_dup", "customer.subscription.deleted",
+        user_id="user_dup", customer="cus_d", sub_id="sub_d",
+        status="canceled", days=30,
+    )
+    r2 = _post_webhook(client_with_db, second, monkeypatch=monkeypatch)
+    assert r2.status_code == 200
+    assert r2.json().get("duplicate") is True
+
+    db_session.expire_all()
+    sub = db_session.query(Subscription).filter_by(user_id="user_dup").first()
+    assert sub.status == "active"  # duplicate skipped, not re-applied
+
+
+def test_webhook_maps_by_customer_id_when_metadata_missing(
+    client_with_db, db_session, monkeypatch
+):
+    from db_models import Subscription
+
+    db_session.add(
+        Subscription(
+            user_id="user_fallback",
+            stripe_customer_id="cus_fb",
+            stripe_subscription_id="sub_fb",
+            plan="pro",
+            status="incomplete",
+            current_period_end=None,
+        )
+    )
+    db_session.commit()
+
+    event = _sub_event(
+        "evt_fb", "customer.subscription.updated",
+        user_id="user_fallback", customer="cus_fb", sub_id="sub_fb",
+        status="active", days=30,
+    )
+    # Strip the metadata so resolution must fall back to the customer id.
+    event["data"]["object"]["metadata"] = {}
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    sub = db_session.query(Subscription).filter_by(user_id="user_fallback").first()
+    assert sub.status == "active"
+
+
+def test_webhook_checkout_completed_captures_customer(
+    client_with_db, db_session, monkeypatch
+):
+    from db_models import Subscription
+
+    event = {
+        "id": "evt_co",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "client_reference_id": "user_co",
+                "customer": "cus_co",
+                "subscription": "sub_co",
+            }
+        },
+    }
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    sub = db_session.query(Subscription).filter_by(user_id="user_co").first()
+    assert sub is not None
+    assert sub.stripe_customer_id == "cus_co"
+    assert sub.stripe_subscription_id == "sub_co"
+    assert sub.status == "incomplete"  # not Pro until the subscription event
+
+
+def test_webhook_unhandled_event_acknowledged_and_recorded(
+    client_with_db, db_session, monkeypatch
+):
+    from db_models import WebhookEvent
+
+    event = {"id": "evt_ping", "type": "ping", "data": {"object": {}}}
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    assert (
+        db_session.query(WebhookEvent).filter_by(event_id="evt_ping").first()
+        is not None
+    )
+
+
+def test_webhook_malformed_event_rejected(client_with_db, monkeypatch):
+    event = {"data": {"object": {}}}  # no id / type
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 400
