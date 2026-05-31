@@ -45,6 +45,17 @@ def test_scan_id_is_uuid_not_integer():
     assert id_col.type.python_type is _uuid.UUID
 
 
+def test_phase4_user_id_column_present_on_both_tables():
+    """Phase 4: each row optionally carries the Clerk user_id (sub claim)."""
+    scan_cols = {c.name for c in Scan.__table__.columns}
+    assessment_cols = {c.name for c in Assessment.__table__.columns}
+    assert "user_id" in scan_cols
+    assert "user_id" in assessment_cols
+    # Nullable so Phase-3 rows survive without backfill.
+    assert Scan.__table__.columns["user_id"].nullable is True
+    assert Assessment.__table__.columns["user_id"].nullable is True
+
+
 # ── In-memory SQLite round-trips (uses conftest.db_session fixture) ──────────
 
 def test_persist_scan_round_trip(db_session):

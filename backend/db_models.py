@@ -40,6 +40,10 @@ class Scan(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    # Phase 4: Clerk user_id (sub claim). Nullable so the Phase-3 rows that
+    # predate auth survive the migration; new rows always set it when an
+    # authenticated user is the caller.
+    user_id = Column(String(64), nullable=True, index=True)
     filename = Column(String(256), nullable=False)
     risk_level = Column(String(8), nullable=False)
     risk_score = Column(Integer, nullable=False)
@@ -63,6 +67,10 @@ class Assessment(Base):
     scan_id = Column(
         Uuid, ForeignKey("scans.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    # Phase 4: denormalised Clerk user_id so per-user list/access queries do
+    # not always need a join, and so an orphaned Phase-3 scan cannot be silently
+    # reassigned by linking a new assessment to it.
+    user_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
     framework = Column(String(64), nullable=False)
     headline = Column(Text, nullable=False)
