@@ -58,3 +58,42 @@ def client_with_db(db_session):
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# Phase 4 — Clerk user identity stubbed via dependency_overrides.
+TEST_USER_ID = "user_test_phase4"
+OTHER_USER_ID = "user_other_phase4"
+
+
+@pytest.fixture
+def client_with_db_and_auth(client_with_db):
+    """TestClient with DB + a stubbed authenticated user. Both
+    get_current_user (required) and get_current_user_optional return
+    TEST_USER_ID, so endpoints behave as if a real Clerk JWT was verified."""
+    from auth import get_current_user, get_current_user_optional
+    from main import app
+
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
+    try:
+        yield client_with_db
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)
+
+
+@pytest.fixture
+def client_with_auth_only():
+    """TestClient with the auth user stubbed but NO database — used to verify
+    503 behaviour on endpoints that need a DB to honour the request."""
+    from fastapi.testclient import TestClient
+    from auth import get_current_user, get_current_user_optional
+    from main import app
+
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)

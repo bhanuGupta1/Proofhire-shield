@@ -332,27 +332,42 @@ def test_scan_cv_no_scan_id_when_db_unavailable():
     assert body["scan_id"] is None
 
 
-def test_scan_cv_returns_scan_id_when_db_available(client_with_db):
+def test_scan_cv_anonymous_with_db_does_not_persist(client_with_db, db_session):
+    """Phase 4: DB available but no authenticated user → still no persistence.
+    Nothing reaches the table without a known owner."""
+    from db_models import Scan
+
     r = client_with_db.post(
         "/scan-cv",
         files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
     )
     assert r.status_code == 200
     body = r.json()["result"]
+    assert body["scan_id"] is None
+    assert db_session.query(Scan).count() == 0
+
+
+def test_scan_cv_returns_scan_id_when_db_and_auth(client_with_db_and_auth):
+    r = client_with_db_and_auth.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    body = r.json()["result"]
     assert body["scan_id"] is not None
-    # Must be a valid UUID string (no sequential integers).
     import uuid as _uuid
 
     parsed = _uuid.UUID(body["scan_id"])
     assert str(parsed) == body["scan_id"]
 
 
-def test_scan_cv_persists_safe_copy_only_no_original(client_with_db, db_session):
-    """Privacy invariant: the persisted row stores safe_copy_text but NEVER the
-    raw original_text. We assert by inspecting the table directly."""
+def test_scan_cv_persists_with_user_id_when_authed(client_with_db_and_auth, db_session):
+    """Privacy + Phase 4: the persisted row stores safe_copy_text only AND tags
+    it with the authenticated Clerk user_id."""
     from db_models import Scan
+    from conftest import TEST_USER_ID
 
-    r = client_with_db.post(
+    r = client_with_db_and_auth.post(
         "/scan-cv",
         files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
     )
@@ -362,14 +377,14 @@ def test_scan_cv_persists_safe_copy_only_no_original(client_with_db, db_session)
     row = rows[0]
     assert row.filename == "01_clean.pdf"
     assert row.safe_copy_text  # non-empty
-    # The Scan model has no original_text column at all; assert at the schema level.
+    assert row.user_id == TEST_USER_ID
     assert "original_text" not in {c.name for c in Scan.__table__.columns}
 
 
-def test_scan_cv_response_scan_id_matches_db_row(client_with_db, db_session):
+def test_scan_cv_response_scan_id_matches_db_row(client_with_db_and_auth, db_session):
     from db_models import Scan
 
-    r = client_with_db.post(
+    r = client_with_db_and_auth.post(
         "/scan-cv",
         files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
     )
@@ -381,10 +396,11 @@ def test_scan_cv_response_scan_id_matches_db_row(client_with_db, db_session):
 
 # ── Phase 3: /assessment with scan_id input + persistence ────────────────────
 
-def _make_persisted_scan(db_session):
+def _make_persisted_scan_for_user(db_session, user_id):
     from db_models import Scan
 
     scan = Scan(
+        user_id=user_id,
         filename="cv.pdf",
         risk_level="GREEN",
         risk_score=0,
@@ -402,12 +418,13 @@ def _make_persisted_scan(db_session):
     return scan
 
 
-def test_assessment_with_scan_id_loads_and_persists(client_with_db, db_session, monkeypatch):
+def test_assessment_with_scan_id_loads_and_persists(client_with_db_and_auth, db_session, monkeypatch):
     from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    from conftest import TEST_USER_ID
     from db_models import Assessment
     import main as main_module
 
-    scan = _make_persisted_scan(db_session)
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
 
     canned = AssessmentReport(
         framework=FRAMEWORK_NAME,
@@ -420,7 +437,7 @@ def test_assessment_with_scan_id_loads_and_persists(client_with_db, db_session, 
     )
     monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
 
-    r = client_with_db.post(
+    r = client_with_db_and_auth.post(
         "/assessment",
         json={"scan_id": str(scan.id), "role_context": "Backend at fintech."},
     )
@@ -432,22 +449,47 @@ def test_assessment_with_scan_id_loads_and_persists(client_with_db, db_session, 
     rows = db_session.query(Assessment).all()
     assert len(rows) == 1
     assert str(rows[0].scan_id) == str(scan.id)
+    assert rows[0].user_id == TEST_USER_ID
     assert rows[0].provider_used == "anthropic"
     assert rows[0].overall_score == 80
 
 
-def test_assessment_with_scan_id_but_no_db_returns_503():
+def test_assessment_scan_id_without_auth_returns_401():
+    """Phase 4: anonymous calls cannot use scan_id at all (auth checked first)."""
     r = client.post(
+        "/assessment",
+        json={"scan_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert r.status_code == 401
+
+
+def test_assessment_with_auth_no_db_returns_503(client_with_auth_only):
+    """Authenticated but no DB configured → 503 (can't honour scan_id)."""
+    r = client_with_auth_only.post(
         "/assessment",
         json={"scan_id": "00000000-0000-0000-0000-000000000000"},
     )
     assert r.status_code == 503
 
 
-def test_assessment_with_unknown_scan_id_returns_404(client_with_db):
-    r = client_with_db.post(
+def test_assessment_with_unknown_scan_id_returns_404(client_with_db_and_auth):
+    r = client_with_db_and_auth.post(
         "/assessment",
         json={"scan_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert r.status_code == 404
+
+
+def test_assessment_other_users_scan_id_returns_404(client_with_db_and_auth, db_session):
+    """Security: a known scan_id belonging to a DIFFERENT user must return 404,
+    not 200 — never leak that a scan exists or expose its contents."""
+    from conftest import OTHER_USER_ID
+
+    scan = _make_persisted_scan_for_user(db_session, OTHER_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"scan_id": str(scan.id)},
     )
     assert r.status_code == 404
 

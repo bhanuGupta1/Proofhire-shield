@@ -34,6 +34,7 @@ from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
 from db_models import Assessment, Scan
+from auth import get_current_user_optional
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -108,6 +109,7 @@ async def scan_cv(
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
     persist: bool = True,
+    current_user: str | None = Depends(get_current_user_optional),
 ) -> ScanResponse:
     # Content-type guard
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
@@ -201,14 +203,14 @@ async def scan_cv(
         ),
     )
 
-    # Persistence is best-effort. The scan succeeded in memory; if the DB write
-    # fails we still return a 200 with the result, just without a scan_id.
-    # Only safe_copy_text is stored — original_text is never persisted (privacy).
-    # Text fields are capped to _MAX_PERSISTED_TEXT_CHARS so unauthenticated
-    # callers cannot rapidly fill storage by uploading near-cap text repeatedly.
-    if db is not None and persist:
+    # Persistence is best-effort AND requires an authenticated caller (Phase 4).
+    # Anonymous callers always get the in-memory result without a scan_id, so
+    # nothing reaches the database without a known owner. Storage caps prevent
+    # one authed user from rapidly filling the table by uploading near-cap text.
+    if db is not None and persist and current_user is not None:
         try:
             row = Scan(
+                user_id=current_user,
                 filename=result.filename[:256],
                 risk_level=result.risk_level,
                 risk_score=result.risk_score,
@@ -235,14 +237,15 @@ async def scan_cv(
 async def trust_report(
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
+    current_user: str | None = Depends(get_current_user_optional),
 ) -> Response:
     """Re-scan the CV and return a Trust Report PDF."""
-    # Pass db explicitly: when this endpoint calls scan_cv as a regular Python
-    # function the FastAPI Depends machinery does not fire, so the default value
-    # would be the Depends marker rather than a real session. persist=False so
-    # PDF generation does not silently double-write a scan row that the caller
-    # neither requested nor receives a scan_id for.
-    scan = await scan_cv(file, db=db, persist=False)
+    # Pass db + current_user explicitly: when this endpoint calls scan_cv as a
+    # regular Python function the FastAPI Depends machinery does not fire, so
+    # the defaults would be the Depends marker rather than real values.
+    # persist=False so PDF generation does not silently double-write a scan row
+    # the caller neither requested nor receives a scan_id for.
+    scan = await scan_cv(file, db=db, persist=False, current_user=current_user)
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
@@ -271,23 +274,36 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
 def assessment_endpoint(
     req: AssessmentRequest,
     db: Session | None = Depends(get_db),
+    current_user: str | None = Depends(get_current_user_optional),
 ) -> AssessmentReportModel:
     """Generate a structured ProofHire v1 candidate assessment.
 
     Two input modes:
-    - `scan_id`: load the persisted Scan row, reuse its safe_copy_text + signals
-      (no re-scan, no extra cost), persist the resulting Assessment linked by FK.
-    - `cv_text`: re-run the Phase-1 pipeline in memory and generate. NOT persisted
-      (Phase 4 with auth will revisit; for now anonymous calls stay anonymous).
+    - `scan_id`: requires authentication. Loads the caller's own Scan row
+      (filtered by user_id so a known UUID belonging to another user returns
+      404, not 200), reuses its safe_copy_text + signals, persists the Assessment.
+    - `cv_text`: anonymous-allowed. Re-runs Phase-1 in memory, generates,
+      does NOT persist (per-user history requires authentication AND scan_id).
     Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
     if req.scan_id:
+        if current_user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required to use scan_id.",
+            )
         if db is None:
             raise HTTPException(
                 status_code=503,
                 detail="scan_id requires a configured database.",
             )
-        scan_row = db.get(Scan, req.scan_id)
+        # Scope by user_id so a known scan UUID belonging to a different user
+        # returns 404 rather than 200.
+        scan_row = (
+            db.query(Scan)
+            .filter_by(id=req.scan_id, user_id=current_user)
+            .first()
+        )
         if scan_row is None:
             raise HTTPException(status_code=404, detail="Scan not found.")
         cv_safe_copy = scan_row.safe_copy_text
@@ -330,13 +346,15 @@ def assessment_endpoint(
     except AssessmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    # Persist the Assessment only when it is anchored to a Scan in the DB.
-    # cv_text-only assessments stay ephemeral until Phase 4 (auth) introduces
-    # per-recruiter-firm history.
-    if req.scan_id and db is not None:
+    # Persist the Assessment only when it is anchored to a Scan in the DB AND
+    # the caller is authenticated. cv_text-only / anonymous assessments stay
+    # ephemeral. user_id is denormalised onto the row so per-user list queries
+    # do not always need a join through scans.
+    if req.scan_id and db is not None and current_user is not None:
         try:
             row = Assessment(
                 scan_id=req.scan_id,
+                user_id=current_user,
                 framework=report.framework,
                 headline=report.headline,
                 dimensions=[asdict(d) for d in report.dimensions],
