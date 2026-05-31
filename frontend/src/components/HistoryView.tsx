@@ -27,7 +27,7 @@ interface Props {
 }
 
 export function HistoryView({ refreshKey = 0 }: Props) {
-  const { getToken } = useAuth()
+  const { getToken, orgId } = useAuth()
   const [scans, setScans] = useState<ScanSummary[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -52,9 +52,11 @@ export function HistoryView({ refreshKey = 0 }: Props) {
 
   useEffect(() => {
     load()
-    // refreshKey-driven reload so the parent can request "refetch after upload".
+    // Reload when the parent bumps refreshKey (after an upload) and when the
+    // active Clerk org changes (OrganizationSwitcher) — switching org changes
+    // which scans /scans returns, so the list must refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey])
+  }, [refreshKey, orgId])
 
   if (loading && !scans) {
     return (

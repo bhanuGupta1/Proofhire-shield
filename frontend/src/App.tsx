@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   ClerkProvider,
+  OrganizationSwitcher,
   SignedIn,
   SignedOut,
   SignInButton,
@@ -83,6 +84,7 @@ function AppContent() {
               </SignInButton>
             </SignedOut>
             <SignedIn>
+              <OrganizationSwitcher hidePersonal={false} />
               <span className="text-xs text-gray-400">History enabled</span>
               <UserButton afterSignOutUrl="/" />
             </SignedIn>
