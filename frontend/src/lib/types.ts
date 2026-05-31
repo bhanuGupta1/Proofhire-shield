@@ -73,3 +73,16 @@ export interface AssessmentReport {
   overall_score: number
   next_steps: string[]
 }
+
+export interface ScanSummary {
+  scan_id: string
+  created_at: string
+  filename: string
+  risk_level: RiskLevel
+  risk_score: number
+}
+
+export interface ScanListResponse {
+  scans: ScanSummary[]
+  count: number
+}

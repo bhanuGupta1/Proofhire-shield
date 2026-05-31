@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '@clerk/clerk-react'
 import { matchJD } from '../lib/api'
 import type { JDMatchResult } from '../lib/types'
 
@@ -53,6 +54,7 @@ function SkillColumn({
 }
 
 export function JDMatcher({ cvText }: Props) {
+  const { getToken, isSignedIn } = useAuth()
   const [jd, setJd] = useState('')
   const [result, setResult] = useState<JDMatchResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -63,7 +65,8 @@ export function JDMatcher({ cvText }: Props) {
     setLoading(true)
     setError(null)
     try {
-      setResult(await matchJD(cvText, jd))
+      const token = isSignedIn ? await getToken() : null
+      setResult(await matchJD(cvText, jd, token))
     } catch {
       setError('Could not run the match. Is the backend running?')
     } finally {

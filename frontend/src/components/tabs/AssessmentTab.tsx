@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '@clerk/clerk-react'
 import type { ScanResult, AssessmentReport } from '../../lib/types'
 import { generateAssessment } from '../../lib/api'
 
@@ -13,6 +14,7 @@ function scoreColour(score: number): string {
 }
 
 export function AssessmentTab({ result }: Props) {
+  const { getToken, isSignedIn } = useAuth()
   const [roleContext, setRoleContext] = useState('')
   const [report, setReport] = useState<AssessmentReport | null>(null)
   const [loading, setLoading] = useState(false)
@@ -22,7 +24,8 @@ export function AssessmentTab({ result }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const r = await generateAssessment(result, roleContext.trim() || undefined)
+      const token = isSignedIn ? await getToken() : null
+      const r = await generateAssessment(result, roleContext.trim() || undefined, token)
       setReport(r)
     } catch (e) {
       setError((e as Error).message)

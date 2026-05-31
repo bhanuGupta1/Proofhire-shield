@@ -1,12 +1,28 @@
-import type { ScanResponse, JDMatchResult, AssessmentReport, ScanResult } from './types'
+import type {
+  AssessmentReport,
+  JDMatchResult,
+  ScanListResponse,
+  ScanResponse,
+  ScanResult,
+} from './types'
 
 export const API_BASE: string =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
-export async function scanCV(file: File): Promise<ScanResponse> {
+function bearer(token: string | null | undefined): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+export async function scanCV(file: File, token?: string | null): Promise<ScanResponse> {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`${API_BASE}/scan-cv`, { method: 'POST', body: form })
+  // Do not set Content-Type here — fetch + FormData generates the multipart
+  // boundary header automatically; overriding it breaks the parse.
+  const res = await fetch(`${API_BASE}/scan-cv`, {
+    method: 'POST',
+    headers: bearer(token),
+    body: form,
+  })
   if (!res.ok) {
     const text = await res.text()
     return { ok: false, result: null, error: text }
@@ -18,10 +34,14 @@ export function trustReportUrl(): string {
   return `${API_BASE}/trust-report`
 }
 
-export async function matchJD(cvText: string, jdText: string): Promise<JDMatchResult> {
+export async function matchJD(
+  cvText: string,
+  jdText: string,
+  token?: string | null,
+): Promise<JDMatchResult> {
   const res = await fetch(`${API_BASE}/match-jd`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
     body: JSON.stringify({ cv_text: cvText, jd_text: jdText }),
   })
   if (!res.ok) {
@@ -33,6 +53,7 @@ export async function matchJD(cvText: string, jdText: string): Promise<JDMatchRe
 export async function generateAssessment(
   result: ScanResult,
   roleContext?: string,
+  token?: string | null,
 ): Promise<AssessmentReport> {
   // Send the original text — the server re-runs the Phase-1 pipeline so its
   // structured signals come from authoritative server state, not from us.
@@ -42,7 +63,7 @@ export async function generateAssessment(
   }
   const res = await fetch(`${API_BASE}/assessment`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -59,6 +80,17 @@ export async function generateAssessment(
       // body wasn't JSON — use the raw text we already have
     }
     throw new Error(detail || `Request failed (${res.status})`)
+  }
+  return res.json()
+}
+
+export async function listScans(token: string): Promise<ScanListResponse> {
+  const res = await fetch(`${API_BASE}/scans`, {
+    method: 'GET',
+    headers: bearer(token),
+  })
+  if (!res.ok) {
+    throw new Error(`List scans failed (${res.status})`)
   }
   return res.json()
 }
