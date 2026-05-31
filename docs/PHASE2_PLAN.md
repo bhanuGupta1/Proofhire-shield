@@ -67,22 +67,51 @@ that produces a structured assessment report shown to the recruiter.
   SDR / AE / Sales Leadership — confirm with Bhanu.
 - Calibration tooling (offline notebook) to validate against past HireIQ output.
 
-### Phase 6 — AWS migration
+### Phase 6 — AWS migration (SKIPPED 2026-06-01)
+Skipped per Bhanu: no budget for paid infra until there is a revenue signal.
+Stack stays HF Spaces (backend) + Cloudflare Pages (frontend) + Neon Postgres.
+Original sketch retained below for the day a revenue signal arrives:
 - ECS / Fargate (or Lambda if footprint stays small).
 - RDS Postgres (Aurora Serverless v2 if usage is spiky).
 - Secrets Manager for `ANTHROPIC_API_KEY` and DB URL.
 - CloudFront in front of Cloudflare Pages, or move frontend hosting too.
 
-### Phase 7 — Production hardening + observability
-- CloudWatch / OpenTelemetry instrumentation.
-- Per-firm rate limiting + quota (especially for Claude calls).
-- Per-firm usage metering; Claude spend dashboard.
-- Costed alerting (e.g., alert at $X/day per firm).
+### Phase 7 — Monetisation (Stripe-gated Pro) — re-scoped 2026-06-01
+Original Phase 7 ("Production hardening + observability") deferred. The
+revenue-first re-scope: three-tier billing model, Stripe Checkout, Stripe
+Customer Portal, signature-verified webhook.
 
-### Phase 8 — Recruiter co-pilot
-- Conversational interface over a candidate's scan + assessment.
-- Saved query history per firm.
-- Optional: Slack integration for recruiters to chat with a candidate's record.
+Tiers:
+- **Anonymous**: unlimited stateless scans, no history, no Assessment. Unchanged
+  from today (zero-friction demo path).
+- **Free** (signed-in): 10 persisted scans per calendar month UTC, full history
+  of those, no Assessment. Hard 402 at the 11th scan with an "Upgrade to Pro"
+  message.
+- **Pro** (signed-in + active Stripe subscription): unlimited scans, full
+  history, Assessment unlocked. $29 / month, per-user (org-level Pro deferred).
+
+Org policy (settled with Bhanu): "view-everything" — if a Pro org member
+generated an Assessment, free org-mates see it via the existing
+`or_(user_id, org_id)` scope. Pro is a generation gate, not a viewing gate.
+
+Surface:
+- Schema: `subscriptions(user_id PK, stripe_customer_id, stripe_subscription_id,
+  plan, status, current_period_end, created_at, updated_at)` + migration 0004.
+- Helpers: `is_pro(user_id, db)` and `scans_used_this_month(user_id, db)` — both
+  computed via existing indexes, no counter table.
+- New endpoints: `POST /billing/checkout-session`, `POST /billing/portal`,
+  `GET /billing/status`, `POST /billing/webhook` (signature-verified).
+- New dep: `stripe` Python SDK. `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `STRIPE_PRICE_ID_PRO` env vars. Frontend reads `VITE_STRIPE_PUBLISHABLE_KEY`.
+- Backwards compat: if Stripe envs are unset, billing endpoints return 503 and
+  the quota gate degrades open (Phase-4/5 behaviour preserved).
+- HIGH-RISK path (per CLAUDE.md §3): `/billing/webhook`. Signature verification
+  + idempotency on `event.id` are non-negotiable.
+
+### Phase 8 — Production hardening + observability + Recruiter co-pilot
+Promoted from "original Phase 7 + original Phase 8" — once Phase 7 is producing
+revenue, observability and the co-pilot follow. Specifics deferred until
+Phase 7 close.
 
 ## Architecture decisions (provisional)
 
@@ -91,7 +120,8 @@ that produces a structured assessment report shown to the recruiter.
 - **React + FastAPI** stay the stack.
 - **LLM default: Claude API** (per Bhanu's HireIQ build).
 - **DB**: defer to Phase 3; Postgres-on-Neon to start, Postgres-on-RDS at AWS.
-- **Hosting**: HF Spaces + Cloudflare Pages through Phase 5; AWS in Phase 6.
+- **Hosting**: HF Spaces + Cloudflare Pages indefinitely (Phase 6 AWS migration
+  skipped 2026-06-01). Neon Postgres remains the Phase-3 DB.
 - **Phase-2 reversibility**: assessment endpoint stays optional. If Claude API is
   not configured, the endpoint returns 503 with a clear message; the scan
   workflow still ships as Phase 1.
@@ -170,7 +200,25 @@ that produces a structured assessment report shown to the recruiter.
   tsc clean; vite build clean (210 KB JS / 61 KB gzip).** semgrep was not run
   locally (the pipx semgrep on Windows crashes on rule-pack download with
   `UnicodeDecodeError`); CI runs bandit only, which stays the enforced gate.
-- Phases 6-8: pending Bhanu sign-off on Phase 5.
+- Phase 6: **SKIPPED** (2026-06-01) — no budget for paid infra. Stack stays
+  HF Spaces + Cloudflare Pages + Neon. Re-evaluate when a revenue signal arrives.
+- Phase 7: **IN PROGRESS** — re-scoped from observability to Stripe-gated
+  monetisation. Tier rules + Bhanu's answers recorded below.
+- Phase 8: pending Phase 7 close. Promoted to the original Phase 7 + 8 contents
+  (hardening + observability + recruiter co-pilot).
+
+### Phase 7 answers from Bhanu (2026-06-01)
+1. **Pro scope** — per-user for v1. Org-level Pro deferred (a candidate Phase 7.5
+   or Phase 8 slice).
+2. **Price** — $29 / month (single tier).
+3. **Org policy** — "view-everything": a Pro-generated Assessment is visible to
+   free org-mates via the existing org-scoped `or_(user_id, org_id)` filter. Pro
+   gates GENERATION (and direct access for non-org-shared scans), not viewing
+   of already-shared content.
+4. **Free-tier enforcement** — hard 402 at the 11th scan in a calendar month
+   (UTC). No soft nag.
+5. **Anonymous behaviour** — unchanged from Phase 5: unlimited stateless scans,
+   no history, no Assessment. The zero-friction demo path is preserved.
 
 ### Phase 4 answers from Bhanu (2026-05-31)
 1. **Auth provider** — Clerk (faster integration, free tier, better DX than
