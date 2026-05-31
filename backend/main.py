@@ -39,6 +39,7 @@ from match_analysis import analyze_match
 from db import get_db
 from db_models import Assessment, Scan
 from auth import get_current_user, get_current_user_optional, get_current_org_optional
+from billing import FREE_SCAN_LIMIT, is_pro, scans_used_this_month
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -116,6 +117,20 @@ async def scan_cv(
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
+    # Phase 7.2 — free-tier quota gate. Anonymous (no current_user) is unmetered
+    # so the demo path keeps working; DB-unconfigured deployments degrade open
+    # (Phase 4/5 backward-compat invariant). Pro bypasses unconditionally.
+    # Checked first so a free user at the cap never pays the file-read cost.
+    if current_user is not None and db is not None and not is_pro(current_user, db):
+        if scans_used_this_month(current_user, db) >= FREE_SCAN_LIMIT:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Free plan limit reached ({FREE_SCAN_LIMIT} scans this month). "
+                    "Upgrade to Pro for unlimited scans."
+                ),
+            )
+
     # Content-type guard
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(

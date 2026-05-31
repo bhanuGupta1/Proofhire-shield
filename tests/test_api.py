@@ -907,3 +907,202 @@ def test_get_scan_other_org_returns_404(client_with_db_auth_and_org, db_session)
 
     r = client_with_db_auth_and_org.get(f"/scans/{scan.id}")
     assert r.status_code == 404
+
+
+# ── Phase 7.2: free-tier quota gate on /scan-cv + /trust-report ──────────────
+
+def _seed_persisted_scans(db_session, *, user_id, count):
+    """Stuff `count` Scan rows for `user_id` into the current UTC month so the
+    quota counter sees them. Minimal field set (the quota query only cares
+    about user_id + created_at)."""
+    from db_models import Scan
+
+    for i in range(count):
+        db_session.add(
+            Scan(
+                user_id=user_id,
+                filename=f"cv_{i}.pdf",
+                risk_level="GREEN",
+                risk_score=10,
+                prompt_injection_findings=[],
+                pii_findings=[],
+                ai_text_likelihood="UNLIKELY",
+                ai_text_score=0.1,
+                safe_copy_text="x",
+                summary="ok",
+                match_analysis={"summary": "ok"},
+            )
+        )
+    db_session.commit()
+
+
+def _make_user_pro(db_session, user_id):
+    from datetime import datetime, timedelta, timezone
+
+    from db_models import Subscription
+
+    db_session.add(
+        Subscription(
+            user_id=user_id,
+            stripe_customer_id=f"cus_{user_id}",
+            stripe_subscription_id=f"sub_{user_id}",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+        )
+    )
+    db_session.commit()
+
+
+def test_scan_cv_free_user_under_quota_succeeds(client_with_db_and_auth, db_session):
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT - 1)
+
+    r = client_with_db_and_auth.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+
+
+def test_scan_cv_free_user_at_quota_returns_402(client_with_db_and_auth, db_session):
+    """Exactly at the cap: the next /scan-cv must be 402, NOT 200."""
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT)
+
+    r = client_with_db_and_auth.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 402
+    detail = r.json()["detail"]
+    assert "Free plan limit reached" in detail
+    assert "Upgrade to Pro" in detail
+    assert str(FREE_SCAN_LIMIT) in detail
+
+
+def test_scan_cv_free_user_over_quota_still_returns_402(client_with_db_and_auth, db_session):
+    """Twelve scans already — quota gate stays on."""
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT + 2)
+
+    r = client_with_db_and_auth.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 402
+
+
+def test_scan_cv_pro_user_bypasses_quota(client_with_db_and_auth, db_session):
+    """Pro user with 30 scans this month still scans. Subscription row flips
+    the gate off regardless of count."""
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT + 20)
+    _make_user_pro(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+
+
+def test_scan_cv_anonymous_is_unmetered(client_with_db, db_session):
+    """Anonymous demo path: no quota gate even when SOME user is at the cap.
+    Anon callers have no user_id to count against, so the gate cannot apply."""
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT + 5)
+
+    r = client_with_db.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+
+
+def test_scan_cv_db_unconfigured_degrades_open(client_with_auth_only):
+    """Auth configured but no DB → no way to count quota → must NOT 402.
+    This preserves the Phase 4/5 backward-compat invariant for deployments
+    that haven't enabled persistence yet."""
+    r = client_with_auth_only.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+
+
+def test_scan_cv_quota_counts_only_caller_not_org_colleague(
+    client_with_db_auth_and_org, db_session
+):
+    """Phase 5 org sharing made colleagues' scans visible, but they must NOT
+    count against the caller's free quota — the cap tracks who triggered the
+    work."""
+    from conftest import TEST_USER_ID, OTHER_USER_ID, TEST_ORG_ID
+    from billing import FREE_SCAN_LIMIT
+
+    # Colleague racked up 50 scans in the shared org; caller themselves has 0.
+    from db_models import Scan
+    for i in range(50):
+        db_session.add(
+            Scan(
+                user_id=OTHER_USER_ID,
+                org_id=TEST_ORG_ID,
+                filename=f"col_{i}.pdf",
+                risk_level="GREEN",
+                risk_score=10,
+                prompt_injection_findings=[],
+                pii_findings=[],
+                ai_text_likelihood="UNLIKELY",
+                ai_text_score=0.1,
+                safe_copy_text="x",
+                summary="ok",
+                match_analysis={"summary": "ok"},
+            )
+        )
+    db_session.commit()
+
+    r = client_with_db_auth_and_org.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+
+
+def test_trust_report_free_user_at_quota_returns_402(client_with_db_and_auth, db_session):
+    """The internal scan_cv call from /trust-report runs the quota gate too,
+    so the PDF endpoint is not a quota bypass."""
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT)
+
+    r = client_with_db_and_auth.post(
+        "/trust-report",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 402
+
+
+def test_trust_report_pro_user_bypasses_quota(client_with_db_and_auth, db_session):
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT + 1)
+    _make_user_pro(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/trust-report",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
