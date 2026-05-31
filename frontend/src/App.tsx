@@ -8,6 +8,7 @@ import {
   useAuth,
 } from '@clerk/clerk-react'
 import { FileUpload } from './components/FileUpload'
+import { HistoryView } from './components/HistoryView'
 import { RiskTab } from './components/tabs/RiskTab'
 import { MatchTab } from './components/tabs/MatchTab'
 import { ProofTab } from './components/tabs/ProofTab'
@@ -35,6 +36,8 @@ function AppContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('risk')
+  // Bumped after every successful authed scan so HistoryView re-fetches.
+  const [historyKey, setHistoryKey] = useState(0)
 
   async function handleFile(f: File) {
     setFile(f)
@@ -48,6 +51,10 @@ function AppContent() {
       } else {
         setResult(resp.result)
         setActiveTab('risk')
+        // Only nudge HistoryView when the backend actually persisted (scan_id set).
+        if (resp.result.scan_id) {
+          setHistoryKey((k) => k + 1)
+        }
       }
     } catch {
       setError('Could not reach the scan service. Is the backend running?')
@@ -84,6 +91,10 @@ function AppContent() {
       </header>
 
       <main className="mx-auto max-w-5xl px-6 py-8 space-y-8">
+        <SignedIn>
+          <HistoryView refreshKey={historyKey} />
+        </SignedIn>
+
         <FileUpload onFile={handleFile} loading={loading} />
 
         {error && (
