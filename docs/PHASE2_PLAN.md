@@ -108,6 +108,42 @@ Surface:
 - HIGH-RISK path (per CLAUDE.md §3): `/billing/webhook`. Signature verification
   + idempotency on `event.id` are non-negotiable.
 
+Closed 2026-06-01 (7.1–7.7):
+- 7.1 (`a3121dc`) `subscriptions` model + `is_pro` / `scans_used_this_month` helpers + migration 0004.
+- 7.2 (`df641c7`) `/scan-cv` free-tier 402 gate (the 11th scan in a UTC calendar month).
+- 7.3 (`5d239e6`) `/assessment` Pro gate (initial cut — kept anonymous demo path).
+- 7.4 (`5115760`) `/billing/checkout-session` + `/billing/portal` + `/billing/status`.
+- 7.5 (`20a37ff`) `/billing/webhook` — Stripe signature verification + `webhook_events`
+  idempotency ledger + migration 0005.
+- 7.6 (`8b3f27b`) Frontend — pricing modal, quota meter, Pro gates, upgrade CTA.
+- 7.7 (`6a3f7cb`) End-of-phase Codex P7 adversarial review + hardening. **Round 1**
+  HIGH=3 MED=2 LOW=1 — all six closed in `6a3f7cb` (persist param removed from
+  `/scan-cv`; `/trust-report` now persists and counts toward the quota;
+  `/assessment` requires auth so dropping the Authorization header no longer
+  bypasses the gate; new `last_event_at` column + migration 0006 + the webhook
+  drops events older than the row's last applied; customer-id collision under
+  a different user is refused; webhook commit catches `IntegrityError` and
+  returns duplicate 2xx). **Round 2** on the post-fix source: **HIGH=0** MED=1
+  LOW=1 — the LOW (oversized webhook body + noisy log) is closed in the same
+  commit (256 KB cap on `/billing/webhook`; signature warning no longer carries
+  `exc_info`). The MED is documented below as a Phase 8 follow-up.
+
+Deferred to Phase 8 (Codex P7 round-2 MED #1): free-tier scan quota is a
+check-then-write read of `COUNT(*)`, so a determined attacker firing
+concurrent `/scan-cv` requests at a 9-of-10 quota can race past the cap by
+a few scans before the rows commit. Bounded (each rogue scan still writes a
+row, so the next request is gated correctly) and not exploitable for
+unlimited free use. The proper fix is a `(user_id, utc_month, count)`
+counter row with `SELECT FOR UPDATE` or `INSERT ... ON CONFLICT DO UPDATE`,
+which belongs with the Phase 8 rate-limit + observability work.
+
+As-built deltas from the plan above: the price-id env var shipped as `STRIPE_PRICE_ID`
+(not `STRIPE_PRICE_ID_PRO`); the frontend uses Stripe-hosted Checkout (redirect to the
+returned URL), so no `VITE_STRIPE_PUBLISHABLE_KEY` / Stripe.js is needed client-side.
+After Phase 7.7, `/assessment` requires Clerk auth — the Phase-7 spec table
+("Anonymous: no Assessment") is now actually enforced, so the public demo URL
+shows Risk/Match/Proof only; Assessment is the upgrade carrot.
+
 ### Phase 8 — Production hardening + observability + Recruiter co-pilot
 Promoted from "original Phase 7 + original Phase 8" — once Phase 7 is producing
 revenue, observability and the co-pilot follow. Specifics deferred until
@@ -202,8 +238,14 @@ Phase 7 close.
   `UnicodeDecodeError`); CI runs bandit only, which stays the enforced gate.
 - Phase 6: **SKIPPED** (2026-06-01) — no budget for paid infra. Stack stays
   HF Spaces + Cloudflare Pages + Neon. Re-evaluate when a revenue signal arrives.
-- Phase 7: **IN PROGRESS** — re-scoped from observability to Stripe-gated
-  monetisation. Tier rules + Bhanu's answers recorded below.
+- Phase 7: **COMPLETE + REVIEWED** (2026-06-01) — re-scoped from observability to
+  Stripe-gated monetisation. 7.1–7.7 shipped (commits a3121dc, df641c7, 5d239e6,
+  5115760, 20a37ff, 8b3f27b, 6a3f7cb). End-of-phase Codex P7 round 1 returned
+  HIGH=3 MED=2 LOW=1 — all six closed in `6a3f7cb`. Round 2 on the hardened
+  source: **HIGH=0** MED=1 LOW=1; LOW closed in the same commit; MED (concurrent
+  quota TOCTOU) deferred to Phase 8 with rationale (see "Deferred" block under
+  Phase 7 above). **320 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc
+  clean; vite build clean.** Tier rules + Bhanu's answers recorded below.
 - Phase 8: pending Phase 7 close. Promoted to the original Phase 7 + 8 contents
   (hardening + observability + recruiter co-pilot).
 
