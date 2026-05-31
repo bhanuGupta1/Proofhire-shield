@@ -148,7 +148,25 @@ that produces a structured assessment report shown to the recruiter.
   `test_scans_returns_only_caller_own_scans`. End-of-phase Codex review (P5)
   returned HIGH=0 MED=0 LOW=0 — no fix commits needed.
   **223 tests; bandit 0; semgrep 0; tsc clean; vite clean (210 KB JS / 61 KB gzip).**
-- Phases 5-8: pending Bhanu sign-off on Phase 4.
+- Phase 5: SHIPPED — firm/organisation multi-tenancy via Clerk Organizations
+  (re-scoped from the original "multi-framework scoring engine" plan per the
+  Phase-4 answer #2; the scoring engine is deferred to a later phase). `org_id`
+  columns added to scans/assessments with Clerk org-extraction dependencies
+  (`get_current_org_optional` reads the `org_id` claim); `/scan-cv`, `/scans`,
+  and `/assessment` stamp `org_id` and scope visibility by
+  `or_(user_id == caller, org_id == active_org)`, falling back to user-only when
+  no org is active; new `GET /scans/{id}` returns one scan's full detail under the
+  same user+org scope and 404s (never 403 / existence-leak) on a cross-tenant
+  miss. Frontend: `OrganizationSwitcher` in the header with HistoryView refetch
+  on org switch, and clicking a saved scan rehydrates every tab
+  (Risk/Match/Proof/Assessment) from `GET /scans/{id}` — Proof's PDF re-download
+  is disabled for history-loaded scans, which carry no uploaded File. Privacy
+  invariant intact: `original_text` is still never persisted; the detail endpoint
+  echoes `safe_copy_text`. **243 tests; bandit 0 HIGH/MED (1 pre-existing LOW);
+  tsc clean.** semgrep + production `vite build` pending local run (sandbox has
+  no semgrep and lacks the linux rollup native binary). End-of-phase Codex review
+  (P6) prompt prepared; external adversarial pass pending Bhanu.
+- Phases 6-8: pending Bhanu sign-off on Phase 5.
 
 ### Phase 4 answers from Bhanu (2026-05-31)
 1. **Auth provider** — Clerk (faster integration, free tier, better DX than
