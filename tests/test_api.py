@@ -321,6 +321,64 @@ def test_assessment_endpoint_oversized_cv_text_rejected():
     assert r.status_code == 422
 
 
+# ── Phase 3: /scan-cv persistence + scan_id ──────────────────────────────────
+
+def test_scan_cv_no_scan_id_when_db_unavailable():
+    """Without get_db overridden, the default get_db yields None and the response
+    contains scan_id=None — the Phase 1/2 stateless behaviour is preserved."""
+    r = _post_file(DEMO_DIR / "01_clean.pdf")
+    assert r.status_code == 200
+    body = r.json()["result"]
+    assert body["scan_id"] is None
+
+
+def test_scan_cv_returns_scan_id_when_db_available(client_with_db):
+    r = client_with_db.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    body = r.json()["result"]
+    assert body["scan_id"] is not None
+    # Must be a valid UUID string (no sequential integers).
+    import uuid as _uuid
+
+    parsed = _uuid.UUID(body["scan_id"])
+    assert str(parsed) == body["scan_id"]
+
+
+def test_scan_cv_persists_safe_copy_only_no_original(client_with_db, db_session):
+    """Privacy invariant: the persisted row stores safe_copy_text but NEVER the
+    raw original_text. We assert by inspecting the table directly."""
+    from db_models import Scan
+
+    r = client_with_db.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    rows = db_session.query(Scan).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.filename == "01_clean.pdf"
+    assert row.safe_copy_text  # non-empty
+    # The Scan model has no original_text column at all; assert at the schema level.
+    assert "original_text" not in {c.name for c in Scan.__table__.columns}
+
+
+def test_scan_cv_response_scan_id_matches_db_row(client_with_db, db_session):
+    from db_models import Scan
+
+    r = client_with_db.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    body_scan_id = r.json()["result"]["scan_id"]
+    rows = db_session.query(Scan).all()
+    assert len(rows) == 1
+    assert str(rows[0].id) == body_scan_id
+
+
 def test_assessment_endpoint_ignores_client_supplied_trust_claims(monkeypatch):
     """The endpoint must not honour client-supplied match_analysis / risk_signals.
     Pydantic ignores extra fields by default, so smuggling them is silently dropped."""

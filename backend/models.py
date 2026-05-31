@@ -68,6 +68,9 @@ class AssessmentRequest(BaseModel):
 
 
 class ScanResult(BaseModel):
+    # UUID string when /scan-cv persisted the scan to the database; None when
+    # DATABASE_URL is unset and the API is running in stateless mode.
+    scan_id: str | None = None
     filename: str
     risk_level: Literal["GREEN", "ORANGE", "RED"]
     risk_score: int = Field(ge=0, le=100)

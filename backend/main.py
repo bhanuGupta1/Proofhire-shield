@@ -7,9 +7,11 @@ import re
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from models import (
     AssessmentDimensionModel,
@@ -30,6 +32,8 @@ from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
 from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
+from db import get_db
+from db_models import Scan
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -99,7 +103,10 @@ def health() -> dict[str, str]:
 
 
 @app.post("/scan-cv", response_model=ScanResponse)
-async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
+async def scan_cv(
+    file: UploadFile = File(...),
+    db: Session | None = Depends(get_db),
+) -> ScanResponse:
     # Content-type guard
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(
@@ -191,13 +198,45 @@ async def scan_cv(file: UploadFile = File(...)) -> ScanResponse:
             red_flags=match.red_flags,
         ),
     )
+
+    # Persistence is best-effort. The scan succeeded in memory; if the DB write
+    # fails we still return a 200 with the result, just without a scan_id.
+    # Only safe_copy_text is stored — original_text is never persisted (privacy).
+    if db is not None:
+        try:
+            row = Scan(
+                filename=result.filename,
+                risk_level=result.risk_level,
+                risk_score=result.risk_score,
+                prompt_injection_findings=[f.model_dump() for f in result.prompt_injection_findings],
+                pii_findings=[f.model_dump() for f in result.pii_findings],
+                ai_text_likelihood=result.ai_text_likelihood,
+                ai_text_score=result.ai_text_score,
+                safe_copy_text=result.safe_copy_text,
+                summary=result.summary,
+                match_analysis=result.match_analysis.model_dump(),
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            result.scan_id = str(row.id)
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Failed to persist scan")
+
     return ScanResponse(ok=True, result=result)
 
 
 @app.post("/trust-report")
-async def trust_report(file: UploadFile = File(...)) -> Response:
+async def trust_report(
+    file: UploadFile = File(...),
+    db: Session | None = Depends(get_db),
+) -> Response:
     """Re-scan the CV and return a Trust Report PDF."""
-    scan = await scan_cv(file)
+    # Pass db explicitly: when this endpoint calls scan_cv as a regular Python
+    # function the FastAPI Depends machinery does not fire, so the default value
+    # would be the Depends marker rather than a real session.
+    scan = await scan_cv(file, db=db)
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
