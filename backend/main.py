@@ -45,6 +45,20 @@ _ALLOWED_CONTENT_TYPES = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("ProofHire Shield API starting")
+    # If a database is configured, bring its schema up to head before serving
+    # traffic. Migration failure is fatal — better to fail loud than to serve
+    # writes against a stale schema.
+    if os.environ.get("DATABASE_URL"):
+        try:
+            from alembic.config import Config
+            from alembic import command as alembic_command
+
+            cfg = Config("alembic.ini")
+            alembic_command.upgrade(cfg, "head")
+            logger.info("Database migrations applied")
+        except Exception:
+            logger.exception("Database migrations failed")
+            raise
     yield
     logger.info("ProofHire Shield API stopped")
 
