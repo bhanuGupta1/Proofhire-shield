@@ -137,7 +137,25 @@ that produces a structured assessment report shown to the recruiter.
   before LLM call; safe_copy_text/summary capped at 64 KB; `/trust-report` calls
   `scan_cv` with `persist=False`; validator now rejects "both present").
   **198 tests; bandit 0; semgrep 0; tsc clean; vite clean.**
-- Phases 4-8: pending Bhanu sign-off on Phase 3.
+- Phase 4: SHIPPED + REVIEWED — Clerk JWT verification (`backend/auth.py`,
+  PyJWKClient + RS256), `user_id` columns added to scans/assessments via
+  migration 0002, `/scan-cv` + `/trust-report` + `/assessment` honour the
+  authenticated caller (anonymous flow preserved with zero persistence), new
+  `GET /scans` per-user history endpoint, frontend ClerkProvider with
+  SignedIn/SignedOut UI and a HistoryView panel that fetches /scans for the
+  signed-in recruiter. Cross-tenant scoping verified by
+  `test_assessment_other_users_scan_id_returns_404` and
+  `test_scans_returns_only_caller_own_scans`. End-of-phase Codex review (P5)
+  returned HIGH=0 MED=0 LOW=0 — no fix commits needed.
+  **223 tests; bandit 0; semgrep 0; tsc clean; vite clean (210 KB JS / 61 KB gzip).**
+- Phases 5-8: pending Bhanu sign-off on Phase 4.
+
+### Phase 4 answers from Bhanu (2026-05-31)
+1. **Auth provider** — Clerk (faster integration, free tier, better DX than
+   Supabase Auth).
+2. **Multi-tenancy** — per-user only for now. Firm-level sharing is Phase 5.
+3. **scan_id on frontend** — yes, "recent scans" history list landed
+   (HistoryView component above the file upload, only visible while signed in).
 
 ### Phase 3 answers from Bhanu (2026-05-31)
 1. **DATABASE_URL** — Neon free tier; driver choice mine → psycopg2-binary +
