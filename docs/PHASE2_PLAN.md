@@ -126,7 +126,24 @@ that produces a structured assessment report shown to the recruiter.
 - Phase 2 frontend: SHIPPED + ALIGNED — Assessment tab below Risk/Match/Proof
   with optional role-context textarea and structured-report view. `api.ts` now
   sends `original_text` to match the server-side re-derive shift.
-- Phases 3-8: pending Phase 2 completion + Bhanu sign-off.
+- Phase 3: SHIPPED + REVIEWED — SQLAlchemy 2.x + Alembic skeleton with optional
+  persistence (`DATABASE_URL` unset → Phase-1/2 behaviour unchanged); `/scan-cv`
+  persists + returns `scan_id` (UUID); `/assessment` accepts EITHER `cv_text` OR
+  `scan_id` (XOR-validated) and persists results with `scan_id` FK + `provider_used`
+  audit field. Privacy invariant: `original_text` is never written; only the
+  scrubbed `safe_copy_text` is stored, capped at 64 KB per row. Driver:
+  psycopg2-binary; tests use SQLite via StaticPool. End-of-phase Codex review (P4)
+  returned HIGH=0 MED=2 LOW=2; all four closed in `4a108f2` (DB read txn released
+  before LLM call; safe_copy_text/summary capped at 64 KB; `/trust-report` calls
+  `scan_cv` with `persist=False`; validator now rejects "both present").
+  **198 tests; bandit 0; semgrep 0; tsc clean; vite clean.**
+- Phases 4-8: pending Bhanu sign-off on Phase 3.
+
+### Phase 3 answers from Bhanu (2026-05-31)
+1. **DATABASE_URL** — Neon free tier; driver choice mine → psycopg2-binary +
+   SQLAlchemy 2.x sync sessions (boring; matches existing sync endpoints).
+2. **original_text** — never store. safe_copy_text only. Re-upload to re-scan.
+3. **scan_id** — UUID, exposed in /scan-cv response. No sequential integers.
 
 ### Phase 2 answers from Bhanu (2026-05-30)
 
