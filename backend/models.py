@@ -121,3 +121,19 @@ class ScanResponse(BaseModel):
     ok: bool
     result: ScanResult | None = None
     error: str | None = None
+
+
+class BillingRedirectResponse(BaseModel):
+    """A Stripe-hosted URL (Checkout or Billing Portal) for the client to open."""
+    url: str
+
+
+class BillingStatusResponse(BaseModel):
+    """Drives the frontend quota meter + Pro gating. current_period_end and status
+    are echoed from the user's Subscription row (null when they have none)."""
+    plan: Literal["free", "pro"]
+    is_pro: bool
+    scans_used: int = Field(ge=0)
+    scan_limit: int = Field(ge=0)
+    current_period_end: str | None = None  # ISO 8601 — when the Pro period renews/ends
+    status: str | None = None  # raw Stripe subscription status, for display

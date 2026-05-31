@@ -19,6 +19,8 @@ from models import (
     AssessmentDimensionModel,
     AssessmentReportModel,
     AssessmentRequest,
+    BillingRedirectResponse,
+    BillingStatusResponse,
     CompletenessResultModel,
     JDMatchRequest,
     JDMatchResultModel,
@@ -37,9 +39,15 @@ from trust_report import build_trust_report
 from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
-from db_models import Assessment, Scan
+from db_models import Assessment, Scan, Subscription
 from auth import get_current_user, get_current_user_optional, get_current_org_optional
 from billing import FREE_SCAN_LIMIT, is_pro, scans_used_this_month
+from stripe_billing import (
+    BillingError,
+    create_checkout_session,
+    create_portal_session,
+    is_billing_configured,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -504,6 +512,91 @@ def assessment_endpoint(
         overall_recommendation=report.overall_recommendation,
         overall_score=report.overall_score,
         next_steps=report.next_steps,
+    )
+
+
+@app.post("/billing/checkout-session", response_model=BillingRedirectResponse)
+def billing_checkout_session(
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+) -> BillingRedirectResponse:
+    """Start a Pro subscription. Returns a Stripe Checkout URL for the client to open.
+
+    Auth + DB required. Redirect URLs are SERVER-configured (never client-supplied)
+    to avoid an open-redirect. An already-Pro caller gets 409 and is pointed at the
+    billing portal so we never start a second, duplicate subscription. When we
+    already hold the caller's Stripe customer id we reuse it (no duplicate customer).
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    if not is_billing_configured():
+        raise HTTPException(status_code=503, detail="Billing is not configured.")
+    if is_pro(current_user, db):
+        raise HTTPException(
+            status_code=409,
+            detail="Already subscribed to Pro. Use the billing portal to manage your plan.",
+        )
+    existing = (
+        db.query(Subscription).filter(Subscription.user_id == current_user).first()
+    )
+    customer_id = existing.stripe_customer_id if existing else None
+    try:
+        url = create_checkout_session(user_id=current_user, customer_id=customer_id)
+    except BillingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return BillingRedirectResponse(url=url)
+
+
+@app.post("/billing/portal", response_model=BillingRedirectResponse)
+def billing_portal(
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+) -> BillingRedirectResponse:
+    """Open the Stripe Billing Portal so the caller can manage / cancel Pro.
+
+    Auth + DB required. 404 when the caller has no Stripe customer yet (nothing to
+    manage) — a customer id only exists after a completed checkout.
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    if not is_billing_configured():
+        raise HTTPException(status_code=503, detail="Billing is not configured.")
+    sub = db.query(Subscription).filter(Subscription.user_id == current_user).first()
+    if sub is None or not sub.stripe_customer_id:
+        raise HTTPException(status_code=404, detail="No billing account found.")
+    try:
+        url = create_portal_session(customer_id=sub.stripe_customer_id)
+    except BillingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return BillingRedirectResponse(url=url)
+
+
+@app.get("/billing/status", response_model=BillingStatusResponse)
+def billing_status(
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+) -> BillingStatusResponse:
+    """Report the caller's plan, Pro flag, and this-month scan usage. Auth + DB
+    required. Drives the frontend quota meter and Pro gating. No Stripe call —
+    everything is read from our own rows, so it stays fast and works even if
+    Stripe is unreachable."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    pro = is_pro(current_user, db)
+    used = scans_used_this_month(current_user, db)
+    sub = db.query(Subscription).filter(Subscription.user_id == current_user).first()
+    period_end = (
+        sub.current_period_end.isoformat()
+        if sub is not None and sub.current_period_end is not None
+        else None
+    )
+    return BillingStatusResponse(
+        plan="pro" if pro else "free",
+        is_pro=pro,
+        scans_used=used,
+        scan_limit=FREE_SCAN_LIMIT,
+        current_period_end=period_end,
+        status=sub.status if sub is not None else None,
     )
 
 

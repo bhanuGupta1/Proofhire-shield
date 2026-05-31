@@ -215,3 +215,131 @@ def test_free_scan_limit_is_ten():
 def test_pro_statuses_set_is_minimal():
     """active + trialing only. past_due / canceled / incomplete are NOT Pro."""
     assert PRO_STATUSES == frozenset({"active", "trialing"})
+
+
+# ── Phase 7.4: Stripe billing module (stripe_billing.py) ─────────────────────
+
+import pytest
+
+from stripe_billing import (
+    BillingError,
+    create_checkout_session,
+    create_portal_session,
+    is_billing_configured,
+)
+
+
+def _set_billing_env(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.setenv("STRIPE_PRICE_ID", "price_dummy")
+    for k in ("APP_BASE_URL", "BILLING_SUCCESS_URL", "BILLING_CANCEL_URL",
+              "BILLING_PORTAL_RETURN_URL"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_is_billing_configured_false_when_nothing_set(monkeypatch):
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    assert is_billing_configured() is False
+
+
+def test_is_billing_configured_false_when_only_secret(monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    assert is_billing_configured() is False
+
+
+def test_is_billing_configured_true_when_both_set(monkeypatch):
+    _set_billing_env(monkeypatch)
+    assert is_billing_configured() is True
+
+
+def test_create_checkout_session_raises_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PRICE_ID", raising=False)
+    with pytest.raises(BillingError):
+        create_checkout_session(user_id="user_x")
+
+
+def test_create_checkout_session_builds_subscription_session(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("S", (), {"url": "https://checkout.stripe.test/abc"})()
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", staticmethod(fake_create))
+    url = create_checkout_session(user_id="user_x")
+    assert url == "https://checkout.stripe.test/abc"
+    assert captured["mode"] == "subscription"
+    assert captured["line_items"] == [{"price": "price_dummy", "quantity": 1}]
+    assert captured["client_reference_id"] == "user_x"
+    assert captured["metadata"] == {"user_id": "user_x"}
+    assert captured["subscription_data"] == {"metadata": {"user_id": "user_x"}}
+    # No existing customer id -> Stripe creates one; we must not send a customer key.
+    assert "customer" not in captured
+    # Redirect URLs are server-derived, never client input.
+    assert captured["success_url"].startswith("http")
+    assert captured["cancel_url"].startswith("http")
+
+
+def test_create_checkout_session_reuses_customer_when_supplied(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("S", (), {"url": "https://checkout.stripe.test/abc"})()
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", staticmethod(fake_create))
+    create_checkout_session(user_id="user_x", customer_id="cus_existing")
+    assert captured["customer"] == "cus_existing"
+
+
+def test_create_checkout_session_masks_sdk_error(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    def boom(**kwargs):
+        raise RuntimeError("stripe internal detail")
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", staticmethod(boom))
+    with pytest.raises(BillingError) as ei:
+        create_checkout_session(user_id="user_x")
+    # Generic public message -- no raw SDK detail leaks to the caller.
+    assert "stripe internal detail" not in str(ei.value)
+
+
+def test_create_portal_session_returns_url(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("S", (), {"url": "https://portal.stripe.test/xyz"})()
+
+    monkeypatch.setattr(stripe.billing_portal.Session, "create",
+                        staticmethod(fake_create))
+    url = create_portal_session(customer_id="cus_existing")
+    assert url == "https://portal.stripe.test/xyz"
+    assert captured["customer"] == "cus_existing"
+    assert captured["return_url"].startswith("http")
+
+
+def test_create_portal_session_masks_sdk_error(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    def boom(**kwargs):
+        raise RuntimeError("portal internal detail")
+
+    monkeypatch.setattr(stripe.billing_portal.Session, "create", staticmethod(boom))
+    with pytest.raises(BillingError):
+        create_portal_session(customer_id="cus_existing")

@@ -1202,3 +1202,191 @@ def test_assessment_anonymous_happy_path_unchanged(monkeypatch):
         json={"cv_text": "Sarah Chen, Senior Engineer."},
     )
     assert r.status_code == 200
+
+
+# ── Phase 7.4: billing endpoints (/billing/status, /checkout-session, /portal) ─
+
+def _must_not_call_stripe(**kwargs):
+    raise AssertionError("Stripe layer must not be reached on this path")
+
+
+def test_billing_status_free_user(client_with_db_and_auth, db_session):
+    from conftest import TEST_USER_ID
+    from billing import FREE_SCAN_LIMIT
+
+    _seed_persisted_scans(db_session, user_id=TEST_USER_ID, count=3)
+    r = client_with_db_and_auth.get("/billing/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan"] == "free"
+    assert body["is_pro"] is False
+    assert body["scans_used"] == 3
+    assert body["scan_limit"] == FREE_SCAN_LIMIT
+    assert body["current_period_end"] is None
+    assert body["status"] is None
+
+
+def test_billing_status_pro_user(client_with_db_and_auth, db_session):
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    r = client_with_db_and_auth.get("/billing/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan"] == "pro"
+    assert body["is_pro"] is True
+    assert body["status"] == "active"
+    assert body["current_period_end"] is not None
+
+
+def test_billing_status_503_without_db(client_with_auth_only):
+    r = client_with_auth_only.get("/billing/status")
+    assert r.status_code == 503
+
+
+def test_checkout_session_returns_url(client_with_db_and_auth, monkeypatch):
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(
+        main_module, "create_checkout_session",
+        lambda **kw: "https://checkout.stripe.test/sess_123",
+    )
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 200
+    assert r.json()["url"] == "https://checkout.stripe.test/sess_123"
+
+
+def test_checkout_session_passes_user_and_existing_customer(
+    client_with_db_and_auth, db_session, monkeypatch
+):
+    """The verified user_id (never client input) plus any known customer id are
+    forwarded to the Stripe layer, so a re-subscribe reuses the same customer."""
+    from conftest import TEST_USER_ID
+    from db_models import Subscription
+    import main as main_module
+
+    # A lapsed (canceled) sub: not Pro, but we already hold their customer id.
+    db_session.add(
+        Subscription(
+            user_id=TEST_USER_ID,
+            stripe_customer_id="cus_known",
+            stripe_subscription_id="sub_old",
+            plan="pro",
+            status="canceled",
+            current_period_end=None,
+        )
+    )
+    db_session.commit()
+
+    captured = {}
+
+    def fake_checkout(**kw):
+        captured.update(kw)
+        return "https://checkout.stripe.test/sess_123"
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(main_module, "create_checkout_session", fake_checkout)
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 200
+    assert captured["user_id"] == TEST_USER_ID
+    assert captured["customer_id"] == "cus_known"
+
+
+def test_checkout_session_409_when_already_pro(
+    client_with_db_and_auth, db_session, monkeypatch
+):
+    from conftest import TEST_USER_ID
+    import main as main_module
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(main_module, "create_checkout_session", _must_not_call_stripe)
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 409
+
+
+def test_checkout_session_503_when_billing_unconfigured(
+    client_with_db_and_auth, monkeypatch
+):
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: False)
+    monkeypatch.setattr(main_module, "create_checkout_session", _must_not_call_stripe)
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 503
+
+
+def test_checkout_session_503_without_db(client_with_auth_only):
+    r = client_with_auth_only.post("/billing/checkout-session")
+    assert r.status_code == 503
+
+
+def test_checkout_session_maps_billing_error_to_503(
+    client_with_db_and_auth, monkeypatch
+):
+    import main as main_module
+    from stripe_billing import BillingError
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+
+    def boom(**kw):
+        raise BillingError("Could not start checkout.")
+
+    monkeypatch.setattr(main_module, "create_checkout_session", boom)
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 503
+
+
+def test_portal_returns_url(client_with_db_and_auth, db_session, monkeypatch):
+    from conftest import TEST_USER_ID
+    from db_models import Subscription
+    import main as main_module
+
+    db_session.add(
+        Subscription(
+            user_id=TEST_USER_ID,
+            stripe_customer_id="cus_known",
+            stripe_subscription_id="sub_1",
+            plan="pro",
+            status="active",
+            current_period_end=None,
+        )
+    )
+    db_session.commit()
+
+    captured = {}
+
+    def fake_portal(**kw):
+        captured.update(kw)
+        return "https://portal.stripe.test/p_1"
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(main_module, "create_portal_session", fake_portal)
+    r = client_with_db_and_auth.post("/billing/portal")
+    assert r.status_code == 200
+    assert r.json()["url"] == "https://portal.stripe.test/p_1"
+    assert captured["customer_id"] == "cus_known"
+
+
+def test_portal_404_when_no_customer(client_with_db_and_auth, monkeypatch):
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(main_module, "create_portal_session", _must_not_call_stripe)
+    r = client_with_db_and_auth.post("/billing/portal")
+    assert r.status_code == 404
+
+
+def test_portal_503_when_billing_unconfigured(client_with_db_and_auth, monkeypatch):
+    import main as main_module
+
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: False)
+    monkeypatch.setattr(main_module, "create_portal_session", _must_not_call_stripe)
+    r = client_with_db_and_auth.post("/billing/portal")
+    assert r.status_code == 503
+
+
+def test_portal_503_without_db(client_with_auth_only):
+    r = client_with_auth_only.post("/billing/portal")
+    assert r.status_code == 503
