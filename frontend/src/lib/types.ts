@@ -31,6 +31,8 @@ export interface MatchAnalysis {
 }
 
 export interface ScanResult {
+  // UUID string when the backend persisted the scan (DATABASE_URL set), null otherwise.
+  scan_id: string | null
   filename: string
   risk_level: RiskLevel
   risk_score: number
