@@ -564,6 +564,121 @@ def test_scans_summary_excludes_safe_copy_text(client_with_db_and_auth, db_sessi
     assert "prompt_injection_findings" not in summary
 
 
+# ── Phase 5: org-scoped scope on /scans and /assessment ──────────────────────
+
+def _make_persisted_scan_for_user_org(db_session, user_id, org_id):
+    from db_models import Scan
+
+    scan = Scan(
+        user_id=user_id,
+        org_id=org_id,
+        filename="cv.pdf",
+        risk_level="GREEN",
+        risk_score=0,
+        prompt_injection_findings=[],
+        pii_findings=[],
+        ai_text_likelihood="UNLIKELY",
+        ai_text_score=0.0,
+        safe_copy_text="Sarah Chen, Senior Engineer.",
+        summary="No issues detected.",
+        match_analysis={"experience_tier": "Senior"},
+    )
+    db_session.add(scan)
+    db_session.commit()
+    db_session.refresh(scan)
+    return scan
+
+
+def test_scan_cv_persists_org_id_when_caller_in_org(client_with_db_auth_and_org, db_session):
+    from conftest import TEST_ORG_ID, TEST_USER_ID
+    from db_models import Scan
+
+    r = client_with_db_auth_and_org.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    rows = db_session.query(Scan).all()
+    assert len(rows) == 1
+    assert rows[0].user_id == TEST_USER_ID
+    assert rows[0].org_id == TEST_ORG_ID
+
+
+def test_scans_includes_colleagues_scans_in_same_org(client_with_db_auth_and_org, db_session):
+    """A scan created by OTHER_USER_ID but tagged with the caller's TEST_ORG_ID
+    must appear in the caller's list — that's the whole point of org sharing."""
+    from conftest import OTHER_USER_ID, TEST_ORG_ID, TEST_USER_ID
+
+    own = _make_persisted_scan_for_user_org(db_session, TEST_USER_ID, TEST_ORG_ID)
+    colleague = _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, TEST_ORG_ID)
+
+    r = client_with_db_auth_and_org.get("/scans")
+    assert r.status_code == 200
+    ids = {s["scan_id"] for s in r.json()["scans"]}
+    assert ids == {str(own.id), str(colleague.id)}
+
+
+def test_scans_excludes_other_orgs_scans(client_with_db_auth_and_org, db_session):
+    """A scan tagged with a different org_id must NOT appear, even if the
+    creator is a known user in our test data set."""
+    from conftest import OTHER_ORG_ID, OTHER_USER_ID, TEST_ORG_ID, TEST_USER_ID
+
+    own = _make_persisted_scan_for_user_org(db_session, TEST_USER_ID, TEST_ORG_ID)
+    _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, OTHER_ORG_ID)
+
+    r = client_with_db_auth_and_org.get("/scans")
+    body = r.json()
+    assert body["count"] == 1
+    assert body["scans"][0]["scan_id"] == str(own.id)
+
+
+def test_assessment_scan_id_allows_org_member(client_with_db_auth_and_org, db_session, monkeypatch):
+    """An admin or viewer in TEST_ORG_ID can assess any scan in that org, even
+    one created by a colleague."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    from conftest import OTHER_USER_ID, TEST_ORG_ID, TEST_USER_ID
+    from db_models import Assessment
+    import main as main_module
+
+    colleague_scan = _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, TEST_ORG_ID)
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="x",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="ok",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client_with_db_auth_and_org.post(
+        "/assessment",
+        json={"scan_id": str(colleague_scan.id)},
+    )
+    assert r.status_code == 200
+
+    rows = db_session.query(Assessment).all()
+    assert len(rows) == 1
+    # The Assessment is created BY TEST_USER_ID but INHERITS the scan's org_id.
+    assert rows[0].user_id == TEST_USER_ID
+    assert rows[0].org_id == TEST_ORG_ID
+
+
+def test_assessment_scan_id_denies_other_org_scan(client_with_db_auth_and_org, db_session):
+    """A scan in a DIFFERENT org returns 404 even to an authed caller."""
+    from conftest import OTHER_ORG_ID, OTHER_USER_ID
+
+    foreign = _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, OTHER_ORG_ID)
+
+    r = client_with_db_auth_and_org.post(
+        "/assessment",
+        json={"scan_id": str(foreign.id)},
+    )
+    assert r.status_code == 404
+
+
 def test_assessment_requires_exactly_one_of_cv_text_or_scan_id():
     # Neither → 422.
     r1 = client.post("/assessment", json={"role_context": "Backend engineer"})

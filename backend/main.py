@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from sqlalchemy import or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -36,7 +37,7 @@ from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
 from db_models import Assessment, Scan
-from auth import get_current_user, get_current_user_optional
+from auth import get_current_user, get_current_user_optional, get_current_org_optional
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -112,6 +113,7 @@ async def scan_cv(
     db: Session | None = Depends(get_db),
     persist: bool = True,
     current_user: str | None = Depends(get_current_user_optional),
+    current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
     # Content-type guard
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
@@ -213,6 +215,7 @@ async def scan_cv(
         try:
             row = Scan(
                 user_id=current_user,
+                org_id=current_org,  # None for solo users, the active org id otherwise
                 filename=result.filename[:256],
                 risk_level=result.risk_level,
                 risk_score=result.risk_score,
@@ -240,14 +243,21 @@ async def trust_report(
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
     current_user: str | None = Depends(get_current_user_optional),
+    current_org: str | None = Depends(get_current_org_optional),
 ) -> Response:
     """Re-scan the CV and return a Trust Report PDF."""
-    # Pass db + current_user explicitly: when this endpoint calls scan_cv as a
-    # regular Python function the FastAPI Depends machinery does not fire, so
-    # the defaults would be the Depends marker rather than real values.
-    # persist=False so PDF generation does not silently double-write a scan row
-    # the caller neither requested nor receives a scan_id for.
-    scan = await scan_cv(file, db=db, persist=False, current_user=current_user)
+    # Pass db + current_user + current_org explicitly: when this endpoint calls
+    # scan_cv as a regular Python function the FastAPI Depends machinery does
+    # not fire, so the defaults would be the Depends marker rather than real
+    # values. persist=False so PDF generation does not silently double-write a
+    # scan row the caller neither requested nor receives a scan_id for.
+    scan = await scan_cv(
+        file,
+        db=db,
+        persist=False,
+        current_user=current_user,
+        current_org=current_org,
+    )
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
@@ -264,16 +274,24 @@ async def trust_report(
 def list_scans(
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanListResponse:
-    """List the authenticated user's scans, newest first. Auth + DB required."""
+    """List the scans the caller can see, newest first. Auth + DB required.
+
+    Scope (Phase 5): when the caller is acting inside an organisation context,
+    the list includes every scan whose user_id == current_user OR
+    org_id == current_org. Without an org context, just the caller's own scans.
+    """
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
-    rows = (
-        db.query(Scan)
-        .filter_by(user_id=current_user)
-        .order_by(Scan.created_at.desc())
-        .all()
-    )
+    q = db.query(Scan)
+    if current_org:
+        q = q.filter(
+            or_(Scan.user_id == current_user, Scan.org_id == current_org)
+        )
+    else:
+        q = q.filter(Scan.user_id == current_user)
+    rows = q.order_by(Scan.created_at.desc()).all()
     scans = [
         ScanSummary(
             scan_id=str(row.id),
@@ -304,6 +322,7 @@ def assessment_endpoint(
     req: AssessmentRequest,
     db: Session | None = Depends(get_db),
     current_user: str | None = Depends(get_current_user_optional),
+    current_org: str | None = Depends(get_current_org_optional),
 ) -> AssessmentReportModel:
     """Generate a structured ProofHire v1 candidate assessment.
 
@@ -326,13 +345,17 @@ def assessment_endpoint(
                 status_code=503,
                 detail="scan_id requires a configured database.",
             )
-        # Scope by user_id so a known scan UUID belonging to a different user
-        # returns 404 rather than 200.
-        scan_row = (
-            db.query(Scan)
-            .filter_by(id=req.scan_id, user_id=current_user)
-            .first()
-        )
+        # Scope by user_id (always) OR org_id (when the caller is in an org).
+        # A scan tagged with a different user AND a different/no org returns
+        # 404 rather than 200 — no leakage that the UUID exists.
+        q = db.query(Scan).filter(Scan.id == req.scan_id)
+        if current_org:
+            q = q.filter(
+                or_(Scan.user_id == current_user, Scan.org_id == current_org)
+            )
+        else:
+            q = q.filter(Scan.user_id == current_user)
+        scan_row = q.first()
         if scan_row is None:
             raise HTTPException(status_code=404, detail="Scan not found.")
         cv_safe_copy = scan_row.safe_copy_text
@@ -377,13 +400,15 @@ def assessment_endpoint(
 
     # Persist the Assessment only when it is anchored to a Scan in the DB AND
     # the caller is authenticated. cv_text-only / anonymous assessments stay
-    # ephemeral. user_id is denormalised onto the row so per-user list queries
-    # do not always need a join through scans.
+    # ephemeral. user_id is the assessment creator; org_id is INHERITED from
+    # the scan (not the caller's current org) so an Assessment cannot be
+    # silently moved between orgs if the user switches Clerk org context.
     if req.scan_id and db is not None and current_user is not None:
         try:
             row = Assessment(
                 scan_id=req.scan_id,
                 user_id=current_user,
+                org_id=scan_row.org_id,
                 framework=report.framework,
                 headline=report.headline,
                 dimensions=[asdict(d) for d in report.dimensions],

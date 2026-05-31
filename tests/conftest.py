@@ -63,6 +63,9 @@ def client_with_db(db_session):
 # Phase 4 — Clerk user identity stubbed via dependency_overrides.
 TEST_USER_ID = "user_test_phase4"
 OTHER_USER_ID = "user_other_phase4"
+# Phase 5 — Clerk organisation context.
+TEST_ORG_ID = "org_test_phase5"
+OTHER_ORG_ID = "org_other_phase5"
 
 
 @pytest.fixture
@@ -80,6 +83,25 @@ def client_with_db_and_auth(client_with_db):
     finally:
         app.dependency_overrides.pop(get_current_user, None)
         app.dependency_overrides.pop(get_current_user_optional, None)
+
+
+@pytest.fixture
+def client_with_db_auth_and_org(client_with_db):
+    """TestClient with DB + authed user + active organisation context.
+    get_current_org_optional returns TEST_ORG_ID, so every persistence and
+    listing path treats the caller as a member of that org."""
+    from auth import get_current_user, get_current_user_optional, get_current_org_optional
+    from main import app
+
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_org_optional] = lambda: TEST_ORG_ID
+    try:
+        yield client_with_db
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)
+        app.dependency_overrides.pop(get_current_org_optional, None)
 
 
 @pytest.fixture
