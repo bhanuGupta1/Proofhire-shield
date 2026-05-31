@@ -24,6 +24,8 @@ def test_subscriptions_has_expected_columns(db_session):
         "plan",
         "status",
         "current_period_end",
+        # Phase 7.7 (Codex P7 MED #1): last applied Stripe event timestamp.
+        "last_event_at",
         "created_at",
         "updated_at",
     }

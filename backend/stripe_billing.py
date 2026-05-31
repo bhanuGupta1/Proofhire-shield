@@ -185,5 +185,8 @@ def verify_and_parse_event(payload: bytes, sig_header: str | None) -> Any:
     try:
         return stripe.Webhook.construct_event(payload, sig_header, secret)
     except Exception as exc:
-        logger.warning("Stripe webhook signature verification failed", exc_info=True)
+        # Phase 7.7 LOW #1: an unauthenticated attacker can flood /billing/webhook
+        # with bogus signatures. Log without exc_info so the stack trace doesn't
+        # amplify the log I/O cost of every forged request.
+        logger.warning("Stripe webhook signature verification failed")
         raise WebhookError("Invalid webhook signature.") from exc

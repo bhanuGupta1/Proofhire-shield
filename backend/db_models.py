@@ -121,6 +121,12 @@ class Subscription(Base):
     status = Column(String(24), nullable=False)
     # Nullable: in the 'incomplete' window we may not yet know the period end.
     current_period_end = Column(DateTime(timezone=True), nullable=True)
+    # Phase 7.7 — created-timestamp of the Stripe event that last touched this
+    # row. The webhook handler ignores any inbound event older than this so an
+    # out-of-order `customer.subscription.updated` cannot resurrect Pro access
+    # after a `customer.subscription.deleted` has already been processed.
+    # Nullable so rows from before the migration survive without backfill.
+    last_event_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False

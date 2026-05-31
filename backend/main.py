@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import or_
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from models import (
@@ -124,7 +124,6 @@ def health() -> dict[str, str]:
 async def scan_cv(
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
-    persist: bool = True,
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
@@ -236,9 +235,11 @@ async def scan_cv(
 
     # Persistence is best-effort AND requires an authenticated caller (Phase 4).
     # Anonymous callers always get the in-memory result without a scan_id, so
-    # nothing reaches the database without a known owner. Storage caps prevent
-    # one authed user from rapidly filling the table by uploading near-cap text.
-    if db is not None and persist and current_user is not None:
+    # nothing reaches the database without a known owner. The `persist` flag
+    # was removed in Phase 7.7 — it had become a query parameter that let a
+    # signed-in Free user dodge the quota counter via /scan-cv?persist=false.
+    # Storage caps prevent one authed user from rapidly filling the table.
+    if db is not None and current_user is not None:
         try:
             row = Scan(
                 user_id=current_user,
@@ -276,12 +277,12 @@ async def trust_report(
     # Pass db + current_user + current_org explicitly: when this endpoint calls
     # scan_cv as a regular Python function the FastAPI Depends machinery does
     # not fire, so the defaults would be the Depends marker rather than real
-    # values. persist=False so PDF generation does not silently double-write a
-    # scan row the caller neither requested nor receives a scan_id for.
+    # values. Phase 7.7: persist=False was removed — /trust-report now writes
+    # the Scan row just like /scan-cv, so it counts toward the free-tier quota
+    # instead of being a back-door for unlimited PDF generation.
     scan = await scan_cv(
         file,
         db=db,
-        persist=False,
         current_user=current_user,
         current_org=current_org,
     )
@@ -393,35 +394,36 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
 def assessment_endpoint(
     req: AssessmentRequest,
     db: Session | None = Depends(get_db),
-    current_user: str | None = Depends(get_current_user_optional),
+    current_user: str = Depends(get_current_user),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> AssessmentReportModel:
     """Generate a structured ProofHire v1 candidate assessment.
 
-    Two input modes:
-    - `scan_id`: requires authentication. Loads the caller's own Scan row
-      (filtered by user_id so a known UUID belonging to another user returns
-      404, not 200), reuses its safe_copy_text + signals, persists the Assessment.
-    - `cv_text`: anonymous-allowed. Re-runs Phase-1 in memory, generates,
-      does NOT persist (per-user history requires authentication AND scan_id).
+    Auth REQUIRED (Phase 7.7): anonymous → 401/503. Assessment is a Pro
+    feature, and previously an anonymous-allowed cv_text branch let a denied
+    Free user retry without the Authorization header and bypass the paywall.
+    The demo path is preserved by leaving /scan-cv open to anonymous callers;
+    Assessment is the upgrade carrot, not the demo headline.
+
+    Input modes:
+    - `scan_id`: loads the caller's own Scan row (filtered by user_id so a
+      known UUID belonging to another user returns 404, not 200), reuses its
+      safe_copy_text + signals, persists the Assessment.
+    - `cv_text`: re-runs Phase-1 in memory, generates, does NOT persist
+      (per-user history requires scan_id).
     Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
-    # Phase 7.3 — Pro gate. Anonymous (no current_user) is unmetered to keep
-    # the public demo path frictionless; DB-unconfigured deployments degrade
-    # open so dev/staging without persistence still works. Signed-in callers
-    # without an active Pro subscription get 402.
-    if current_user is not None and db is not None and not is_pro(current_user, db):
+    # Phase 7.3 + 7.7 — Pro gate. Auth is now required (the dep raises 401/503
+    # for anonymous callers before we get here), so the only remaining check is
+    # the subscription state. DB-unconfigured deployments degrade open so
+    # dev/staging without persistence still works.
+    if db is not None and not is_pro(current_user, db):
         raise HTTPException(
             status_code=402,
             detail="Assessment generation requires a Pro subscription.",
         )
 
     if req.scan_id:
-        if current_user is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication required to use scan_id.",
-            )
         if db is None:
             raise HTTPException(
                 status_code=503,
@@ -626,12 +628,22 @@ def _period_end_to_datetime(value: object) -> datetime | None:
         return None
 
 
-def _apply_subscription_event(db: Session, obj: dict) -> None:
+def _apply_subscription_event(
+    db: Session, obj: dict, event_created_unix: object
+) -> None:
     """Upsert the caller's Subscription row from a Stripe subscription object.
 
     Resolves the user by the user_id stamped into subscription metadata at
     checkout, falling back to a lookup by Stripe customer id. An event we cannot
-    map is ignored (logged) so Stripe still receives its 2xx."""
+    map is ignored (logged) so Stripe still receives its 2xx.
+
+    Phase 7.7 hardening:
+    - MED #1: events whose `created` is older than this row's last_event_at are
+      skipped, so a delayed `customer.subscription.updated` cannot resurrect
+      Pro access after `customer.subscription.deleted` has been applied.
+    - MED #2: if `metadata.user_id` and `customer` point at different existing
+      rows, refuse the write — the event would link user A to user B's customer.
+    """
     metadata = obj.get("metadata") or {}
     user_id = metadata.get("user_id")
     customer_id = obj.get("customer")
@@ -655,6 +667,38 @@ def _apply_subscription_event(db: Session, obj: dict) -> None:
         logger.warning("Subscription webhook could not be mapped to a user; ignoring")
         return
 
+    # MED #2 — customer-id collision under a different user. The metadata told
+    # us user A, but customer B already belongs to user C. Refuse rather than
+    # cross-wire two accounts.
+    collision = (
+        db.query(Subscription)
+        .filter(
+            Subscription.stripe_customer_id == customer_id,
+            Subscription.user_id != user_id,
+        )
+        .first()
+    )
+    if collision is not None:
+        logger.warning(
+            "Webhook customer_id already mapped to a different user; refusing"
+        )
+        return
+
+    # MED #1 — drop out-of-order events. Compare the Stripe event `created`
+    # against the last event applied to THIS row.
+    event_created = _period_end_to_datetime(event_created_unix)
+    if sub is not None and sub.last_event_at is not None and event_created is not None:
+        last = sub.last_event_at
+        if last.tzinfo is None:
+            # SQLite (tests) drops tzinfo on read; treat stored values as UTC.
+            last = last.replace(tzinfo=timezone.utc)
+        if event_created <= last:
+            logger.info(
+                "Skipping subscription event older than last applied for user %s",
+                user_id,
+            )
+            return
+
     if sub is None:
         sub = Subscription(
             user_id=user_id, stripe_customer_id=customer_id, status=status
@@ -666,6 +710,8 @@ def _apply_subscription_event(db: Session, obj: dict) -> None:
     sub.status = status
     sub.current_period_end = period_end
     sub.plan = "pro"
+    if event_created is not None:
+        sub.last_event_at = event_created
 
 
 def _apply_checkout_completed(db: Session, obj: dict) -> None:
@@ -711,6 +757,12 @@ async def billing_webhook(
     secret or DB unconfigured (Stripe should retry)."""
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
+    # Phase 7.7 LOW #1: a much smaller webhook-specific cap (256 KB) than the
+    # global 10 MB upload cap. Stripe events are kilobytes; anything larger is
+    # a forged flood and we short-circuit before doing HMAC work.
+    cl = request.headers.get("content-length")
+    if cl is None or not cl.isdigit() or int(cl) > 256 * 1024:
+        raise HTTPException(status_code=413, detail="Webhook body exceeds limit.")
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     try:
@@ -733,13 +785,20 @@ async def billing_webhook(
 
     obj = (event.get("data") or {}).get("object") or {}
     if event_type in _SUBSCRIPTION_EVENTS:
-        _apply_subscription_event(db, obj)
+        _apply_subscription_event(db, obj, event.get("created"))
     elif event_type == "checkout.session.completed":
         _apply_checkout_completed(db, obj)
 
     db.add(WebhookEvent(event_id=event_id, event_type=event_type))
     try:
         db.commit()
+    except IntegrityError:
+        # Phase 7.7 LOW #1 — concurrent delivery of the same event_id beat us
+        # to the insert. The other branch has applied (or is applying) the
+        # same mutation, so this is a duplicate, not a server error. Reply
+        # 2xx so Stripe stops retrying.
+        db.rollback()
+        return {"received": True, "duplicate": True}
     except SQLAlchemyError:
         db.rollback()
         logger.exception("Failed to record billing webhook")
