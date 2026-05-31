@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -303,6 +304,51 @@ def list_scans(
         for row in rows
     ]
     return ScanListResponse(scans=scans, count=len(scans))
+
+
+@app.get("/scans/{scan_id}", response_model=ScanResult)
+def get_scan(
+    scan_id: uuid.UUID,
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
+) -> ScanResult:
+    """Return one scan's full detail by id. Auth + DB required.
+
+    Scope (Phase 5): same rule as list_scans — the row is returned only when
+    user_id == current_user OR (in an org context) org_id == current_org. A
+    UUID belonging to another user/org returns 404, not 200, so the response
+    never leaks that the scan exists.
+
+    The raw original_text is never persisted (Phase 3 privacy invariant), so
+    the scrubbed safe copy is echoed into original_text here. The stored
+    injection / PII findings are intact, so the Risk evidence rehydrates
+    fully; only the side-by-side raw-original pane shows the safe copy.
+    """
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    q = db.query(Scan).filter(Scan.id == scan_id)
+    if current_org:
+        q = q.filter(or_(Scan.user_id == current_user, Scan.org_id == current_org))
+    else:
+        q = q.filter(Scan.user_id == current_user)
+    row = q.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    return ScanResult(
+        scan_id=str(row.id),
+        filename=row.filename,
+        risk_level=row.risk_level,
+        risk_score=row.risk_score,
+        prompt_injection_findings=row.prompt_injection_findings or [],
+        pii_findings=row.pii_findings or [],
+        ai_text_likelihood=row.ai_text_likelihood,
+        ai_text_score=row.ai_text_score,
+        original_text=row.safe_copy_text,
+        safe_copy_text=row.safe_copy_text,
+        summary=row.summary,
+        match_analysis=row.match_analysis,
+    )
 
 
 @app.post("/match-jd", response_model=JDMatchResultModel)

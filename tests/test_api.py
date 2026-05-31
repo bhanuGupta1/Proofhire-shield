@@ -770,3 +770,140 @@ def test_assessment_endpoint_ignores_client_supplied_trust_claims(monkeypatch):
     signals = captured["signals"]
     assert signals["match"]["experience_tier"] != "Principal / Lead"
     assert signals["match"]["total_skills_found"] < 999
+
+
+# ── Phase 5.3: GET /scans/{scan_id} per-scan detail ──────────────────────────
+
+def _make_full_persisted_scan(db_session, user_id, org_id=None):
+    """A scan row with a COMPLETE match_analysis dict so the detail endpoint
+    (response_model=ScanResult) can coerce it into MatchAnalysisModel. The
+    list-only helpers above use partial dicts because /scans never serialises
+    match_analysis; the detail view does."""
+    from db_models import Scan
+
+    scan = Scan(
+        user_id=user_id,
+        org_id=org_id,
+        filename="sarah_chen_cv.pdf",
+        risk_level="ORANGE",
+        risk_score=40,
+        prompt_injection_findings=[
+            {
+                "pattern_id": "ignore_previous",
+                "matched_text": "ignore all previous instructions",
+                "context": "...ignore all previous instructions and...",
+            }
+        ],
+        pii_findings=[{"pii_type": "EMAIL", "matched_text": "sarah@example.com"}],
+        ai_text_likelihood="POSSIBLE",
+        ai_text_score=0.5,
+        safe_copy_text="Sarah Chen, Senior Engineer. Python, AWS. [hidden instruction blocked]",
+        summary="One hidden instruction blocked; one personal data item flagged.",
+        match_analysis={
+            "skills": {"languages": ["Python"], "cloud": ["AWS"]},
+            "experience_tier": "Senior",
+            "years_experience": 8,
+            "education_level": "Bachelor's",
+            "interview_probes": ["Probe AWS scaling decisions"],
+            "key_claims": ["Led cloud migration"],
+            "total_skills_found": 2,
+            "summary": "Senior engineer, cloud-focused.",
+            "completeness": {"score": 90, "breakdown": {"contact": True, "skills": True}},
+            "red_flags": [],
+        },
+    )
+    db_session.add(scan)
+    db_session.commit()
+    db_session.refresh(scan)
+    return scan
+
+
+def test_get_scan_anonymous_denied():
+    """Anonymous → 401 in prod (CLERK_ configured) or 503 in test env (not
+    configured). Either way, no body leaks."""
+    r = client.get("/scans/00000000-0000-0000-0000-000000000000")
+    assert r.status_code in (401, 503)
+
+
+def test_get_scan_returns_503_when_no_db(client_with_auth_only):
+    r = client_with_auth_only.get("/scans/00000000-0000-0000-0000-000000000000")
+    assert r.status_code == 503
+
+
+def test_get_scan_unknown_id_returns_404(client_with_db_and_auth):
+    r = client_with_db_and_auth.get("/scans/00000000-0000-0000-0000-000000000000")
+    assert r.status_code == 404
+
+
+def test_get_scan_invalid_uuid_returns_422(client_with_db_and_auth):
+    """Path param is typed uuid.UUID — a non-UUID string is rejected by FastAPI
+    before the handler runs, so a malformed id never reaches the query."""
+    r = client_with_db_and_auth.get("/scans/not-a-uuid")
+    assert r.status_code == 422
+
+
+def test_get_scan_own_scan_returns_full_detail(client_with_db_and_auth, db_session):
+    from conftest import TEST_USER_ID
+
+    scan = _make_full_persisted_scan(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.get(f"/scans/{scan.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scan_id"] == str(scan.id)
+    assert body["filename"] == "sarah_chen_cv.pdf"
+    assert body["risk_level"] == "ORANGE"
+    assert body["risk_score"] == 40
+    # Risk evidence rehydrates: stored findings come back intact.
+    assert len(body["prompt_injection_findings"]) == 1
+    assert body["prompt_injection_findings"][0]["pattern_id"] == "ignore_previous"
+    assert len(body["pii_findings"]) == 1
+    # match_analysis coerces back into the full model.
+    assert body["match_analysis"]["experience_tier"] == "Senior"
+    assert body["match_analysis"]["completeness"]["score"] == 90
+
+
+def test_get_scan_original_text_is_safe_copy_not_raw(client_with_db_and_auth, db_session):
+    """Phase 3 privacy invariant: raw original_text is never persisted, so the
+    detail endpoint echoes the scrubbed safe copy into original_text. The two
+    fields must be identical — there is no separate raw original on the server."""
+    from conftest import TEST_USER_ID
+
+    scan = _make_full_persisted_scan(db_session, TEST_USER_ID)
+
+    body = client_with_db_and_auth.get(f"/scans/{scan.id}").json()
+    assert body["original_text"] == body["safe_copy_text"]
+    assert body["safe_copy_text"] == scan.safe_copy_text
+
+
+def test_get_scan_other_users_scan_returns_404(client_with_db_and_auth, db_session):
+    """Cross-tenant: a known scan_id owned by a DIFFERENT user returns 404,
+    never 200 — no leak that the scan exists or what it contains."""
+    from conftest import OTHER_USER_ID
+
+    scan = _make_full_persisted_scan(db_session, OTHER_USER_ID)
+
+    r = client_with_db_and_auth.get(f"/scans/{scan.id}")
+    assert r.status_code == 404
+
+
+def test_get_scan_org_colleague_returns_200(client_with_db_auth_and_org, db_session):
+    """Org sharing: a scan created by a colleague but tagged with the caller's
+    org is visible in the detail view, mirroring the list scope."""
+    from conftest import OTHER_USER_ID, TEST_ORG_ID
+
+    scan = _make_full_persisted_scan(db_session, OTHER_USER_ID, TEST_ORG_ID)
+
+    r = client_with_db_auth_and_org.get(f"/scans/{scan.id}")
+    assert r.status_code == 200
+    assert r.json()["scan_id"] == str(scan.id)
+
+
+def test_get_scan_other_org_returns_404(client_with_db_auth_and_org, db_session):
+    """A scan in a DIFFERENT org returns 404 even to an authed caller in an org."""
+    from conftest import OTHER_ORG_ID, OTHER_USER_ID
+
+    scan = _make_full_persisted_scan(db_session, OTHER_USER_ID, OTHER_ORG_ID)
+
+    r = client_with_db_auth_and_org.get(f"/scans/{scan.id}")
+    assert r.status_code == 404
