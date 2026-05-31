@@ -89,3 +89,39 @@ class Assessment(Base):
     provider_used = Column(String(16), nullable=False)
 
     scan = relationship("Scan", back_populates="assessments")
+
+
+class Subscription(Base):
+    """One row per user with a Stripe subscription (Phase 7 monetisation).
+
+    Per-user Pro model: user_id is the primary key, so a user owns at most one
+    subscription. Cancel-then-resubscribe UPSERTs the existing row rather than
+    creating a second one. Org-level Pro is deferred — when it lands it will
+    add a parallel `OrganizationSubscription` table, not change this one.
+    """
+
+    __tablename__ = "subscriptions"
+
+    # Clerk sub claim; same shape as Scan.user_id / Assessment.user_id (String(64)).
+    user_id = Column(String(64), primary_key=True)
+    # Stripe `cus_...`. Indexed because the webhook lookups by it when the
+    # event metadata doesn't carry our user_id (defensive fallback).
+    stripe_customer_id = Column(String(64), nullable=False, index=True)
+    # `sub_...`. Nullable to support the brief `incomplete` window between
+    # Checkout Session creation and the first `customer.subscription.created`
+    # webhook landing.
+    stripe_subscription_id = Column(String(64), nullable=True)
+    # Currently only 'pro'. Kept as a column so a later "pro+" or "team" plan
+    # does not need a migration.
+    plan = Column(String(16), nullable=False, default="pro")
+    # Stripe's lifecycle: 'active' | 'past_due' | 'canceled' | 'incomplete' |
+    # 'incomplete_expired' | 'trialing' | 'unpaid'. We treat ONLY 'active' (or
+    # 'trialing') with current_period_end in the future as Pro — see
+    # billing.is_pro.
+    status = Column(String(24), nullable=False)
+    # Nullable: in the 'incomplete' window we may not yet know the period end.
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
