@@ -395,6 +395,16 @@ def assessment_endpoint(
       does NOT persist (per-user history requires authentication AND scan_id).
     Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
+    # Phase 7.3 — Pro gate. Anonymous (no current_user) is unmetered to keep
+    # the public demo path frictionless; DB-unconfigured deployments degrade
+    # open so dev/staging without persistence still works. Signed-in callers
+    # without an active Pro subscription get 402.
+    if current_user is not None and db is not None and not is_pro(current_user, db):
+        raise HTTPException(
+            status_code=402,
+            detail="Assessment generation requires a Pro subscription.",
+        )
+
     if req.scan_id:
         if current_user is None:
             raise HTTPException(

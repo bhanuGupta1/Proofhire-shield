@@ -424,6 +424,9 @@ def test_assessment_with_scan_id_loads_and_persists(client_with_db_and_auth, db_
     from db_models import Assessment
     import main as main_module
 
+    # Phase 7.3: /assessment is now Pro-gated for signed-in callers. This test
+    # exercises the post-gate persistence flow, so make the test user Pro.
+    _make_user_pro(db_session, TEST_USER_ID)
     scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
 
     canned = AssessmentReport(
@@ -472,7 +475,12 @@ def test_assessment_with_auth_no_db_returns_503(client_with_auth_only):
     assert r.status_code == 503
 
 
-def test_assessment_with_unknown_scan_id_returns_404(client_with_db_and_auth):
+def test_assessment_with_unknown_scan_id_returns_404(client_with_db_and_auth, db_session):
+    # Phase 7.3: caller must be Pro to reach the post-gate 404 branch.
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+
     r = client_with_db_and_auth.post(
         "/assessment",
         json={"scan_id": "00000000-0000-0000-0000-000000000000"},
@@ -483,8 +491,9 @@ def test_assessment_with_unknown_scan_id_returns_404(client_with_db_and_auth):
 def test_assessment_other_users_scan_id_returns_404(client_with_db_and_auth, db_session):
     """Security: a known scan_id belonging to a DIFFERENT user must return 404,
     not 200 — never leak that a scan exists or expose its contents."""
-    from conftest import OTHER_USER_ID
+    from conftest import OTHER_USER_ID, TEST_USER_ID
 
+    _make_user_pro(db_session, TEST_USER_ID)
     scan = _make_persisted_scan_for_user(db_session, OTHER_USER_ID)
 
     r = client_with_db_and_auth.post(
@@ -634,12 +643,13 @@ def test_scans_excludes_other_orgs_scans(client_with_db_auth_and_org, db_session
 
 def test_assessment_scan_id_allows_org_member(client_with_db_auth_and_org, db_session, monkeypatch):
     """An admin or viewer in TEST_ORG_ID can assess any scan in that org, even
-    one created by a colleague."""
+    one created by a colleague. Caller is Pro (Phase 7.3 generation gate)."""
     from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
     from conftest import OTHER_USER_ID, TEST_ORG_ID, TEST_USER_ID
     from db_models import Assessment
     import main as main_module
 
+    _make_user_pro(db_session, TEST_USER_ID)
     colleague_scan = _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, TEST_ORG_ID)
 
     canned = AssessmentReport(
@@ -667,9 +677,11 @@ def test_assessment_scan_id_allows_org_member(client_with_db_auth_and_org, db_se
 
 
 def test_assessment_scan_id_denies_other_org_scan(client_with_db_auth_and_org, db_session):
-    """A scan in a DIFFERENT org returns 404 even to an authed caller."""
-    from conftest import OTHER_ORG_ID, OTHER_USER_ID
+    """A scan in a DIFFERENT org returns 404 even to an authed Pro caller —
+    org-scope still 404s past the Pro gate."""
+    from conftest import OTHER_ORG_ID, OTHER_USER_ID, TEST_USER_ID
 
+    _make_user_pro(db_session, TEST_USER_ID)
     foreign = _make_persisted_scan_for_user_org(db_session, OTHER_USER_ID, OTHER_ORG_ID)
 
     r = client_with_db_auth_and_org.post(
@@ -1106,3 +1118,87 @@ def test_trust_report_pro_user_bypasses_quota(client_with_db_and_auth, db_sessio
     )
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
+
+
+# ── Phase 7.3: Pro gate on /assessment ───────────────────────────────────────
+
+def test_assessment_free_signed_in_user_returns_402(client_with_db_and_auth, db_session):
+    """A signed-in caller without an active Pro subscription gets 402 on
+    /assessment, regardless of cv_text vs scan_id input."""
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={
+            "cv_text": "Sarah Chen, Senior Engineer. Python, AWS.",
+            "role_context": "Senior backend.",
+        },
+    )
+    assert r.status_code == 402
+    assert "Pro subscription" in r.json()["detail"]
+
+
+def test_assessment_free_signed_in_scan_id_path_also_blocked(client_with_db_and_auth, db_session):
+    """scan_id input mode hits the Pro gate too — free user with a valid own
+    scan still gets 402, not 200, not 404."""
+    from conftest import TEST_USER_ID
+
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"scan_id": str(scan.id)},
+    )
+    assert r.status_code == 402
+
+
+def test_assessment_pro_user_cv_text_path_works(client_with_db_and_auth, db_session, monkeypatch):
+    """Pro signed-in user goes through. cv_text path does not persist
+    (pre-Phase-7 invariant retained)."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    from conftest import TEST_USER_ID
+    from db_models import Assessment
+    import main as main_module
+
+    _make_user_pro(db_session, TEST_USER_ID)
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="x",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="ok",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+    )
+    assert r.status_code == 200
+    # cv_text path stays ephemeral — no DB row written.
+    assert db_session.query(Assessment).count() == 0
+
+
+def test_assessment_anonymous_happy_path_unchanged(monkeypatch):
+    """The public demo path must still return 200 for anonymous callers.
+    Phase 7.3's gate is keyed on current_user; anon (no Clerk token) skips it."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    import main as main_module
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="x",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="ok",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer."},
+    )
+    assert r.status_code == 200
