@@ -62,6 +62,20 @@ class AssessmentReportModel(BaseModel):
     next_steps: list[str]
 
 
+class ScanSummary(BaseModel):
+    """Compact scan record for the per-user history list."""
+    scan_id: str
+    created_at: str  # ISO 8601
+    filename: str
+    risk_level: Literal["GREEN", "ORANGE", "RED"]
+    risk_score: int
+
+
+class ScanListResponse(BaseModel):
+    scans: list[ScanSummary]
+    count: int
+
+
 class AssessmentRequest(BaseModel):
     """Phase 2 review note: the endpoint re-runs the scanner + heuristic engine
     on `cv_text` server-side. Clients no longer supply match_analysis or

@@ -494,6 +494,76 @@ def test_assessment_other_users_scan_id_returns_404(client_with_db_and_auth, db_
     assert r.status_code == 404
 
 
+# ── Phase 4.3: GET /scans history endpoint ───────────────────────────────────
+
+def test_scans_anonymous_denied():
+    """Anonymous → 401 in prod (CLERK_ configured) or 503 in test env (not
+    configured). Either way, no body leaks."""
+    r = client.get("/scans")
+    assert r.status_code in (401, 503)
+
+
+def test_scans_returns_503_when_no_db(client_with_auth_only):
+    r = client_with_auth_only.get("/scans")
+    assert r.status_code == 503
+
+
+def test_scans_empty_when_user_has_no_scans(client_with_db_and_auth):
+    r = client_with_db_and_auth.get("/scans")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 0
+    assert body["scans"] == []
+
+
+def test_scans_returns_only_caller_own_scans(client_with_db_and_auth, db_session):
+    """Cross-tenant security: a scan tagged with OTHER_USER_ID must not appear
+    in the caller's list."""
+    from conftest import OTHER_USER_ID, TEST_USER_ID
+
+    own = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+    _make_persisted_scan_for_user(db_session, OTHER_USER_ID)
+
+    r = client_with_db_and_auth.get("/scans")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1
+    assert body["scans"][0]["scan_id"] == str(own.id)
+    assert body["scans"][0]["filename"] == "cv.pdf"
+    assert body["scans"][0]["risk_level"] == "GREEN"
+
+
+def test_scans_ordered_newest_first(client_with_db_and_auth, db_session):
+    """Newest scan must appear first so the recruiter sees most-recent work."""
+    from conftest import TEST_USER_ID
+
+    first = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+    second = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+    # Newer rows have later created_at (server-side default). Verify second
+    # appears before first.
+
+    r = client_with_db_and_auth.get("/scans")
+    body = r.json()
+    assert body["count"] == 2
+    ids = [s["scan_id"] for s in body["scans"]]
+    assert ids == [str(second.id), str(first.id)]
+
+
+def test_scans_summary_excludes_safe_copy_text(client_with_db_and_auth, db_session):
+    """The list endpoint must NEVER leak safe_copy_text — that's the per-scan
+    detail view's job (Phase 4.x / 5)."""
+    from conftest import TEST_USER_ID
+
+    _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.get("/scans")
+    body = r.json()
+    summary = body["scans"][0]
+    assert "safe_copy_text" not in summary
+    assert "match_analysis" not in summary
+    assert "prompt_injection_findings" not in summary
+
+
 def test_assessment_requires_exactly_one_of_cv_text_or_scan_id():
     # Neither → 422.
     r1 = client.post("/assessment", json={"role_context": "Backend engineer"})

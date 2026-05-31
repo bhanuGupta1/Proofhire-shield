@@ -21,8 +21,10 @@ from models import (
     JDMatchRequest,
     JDMatchResultModel,
     MatchAnalysisModel,
+    ScanListResponse,
     ScanResponse,
     ScanResult,
+    ScanSummary,
 )
 from dataclasses import asdict
 from jd_match import match_cv_to_jd
@@ -34,7 +36,7 @@ from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
 from db_models import Assessment, Scan
-from auth import get_current_user_optional
+from auth import get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -256,6 +258,33 @@ async def trust_report(
             "Content-Disposition": f'attachment; filename="trust-report-{scan.result.filename}.pdf"'
         },
     )
+
+
+@app.get("/scans", response_model=ScanListResponse)
+def list_scans(
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+) -> ScanListResponse:
+    """List the authenticated user's scans, newest first. Auth + DB required."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+    rows = (
+        db.query(Scan)
+        .filter_by(user_id=current_user)
+        .order_by(Scan.created_at.desc())
+        .all()
+    )
+    scans = [
+        ScanSummary(
+            scan_id=str(row.id),
+            created_at=row.created_at.isoformat(),
+            filename=row.filename,
+            risk_level=row.risk_level,
+            risk_score=row.risk_score,
+        )
+        for row in rows
+    ]
+    return ScanListResponse(scans=scans, count=len(scans))
 
 
 @app.post("/match-jd", response_model=JDMatchResultModel)
