@@ -135,6 +135,10 @@ class AssessmentReport:
     overall_recommendation: str
     overall_score: int
     next_steps: list[str]
+    # Set by the public dispatcher to "anthropic" | "groq" so the endpoint can
+    # record which provider actually answered (Phase-3 audit data). Defaults to
+    # "" so existing tests that construct AssessmentReport by hand stay green.
+    provider_used: str = ""
 
 
 class AssessmentError(Exception):
@@ -380,8 +384,12 @@ def generate_assessment_report(
     logger.info("Assessment provider: %s", provider)
 
     if provider == "anthropic":
-        return _generate_with_anthropic(cv_safe_copy, signals, role_context, client, model)
-    if provider == "groq":
-        return _generate_with_groq(cv_safe_copy, signals, role_context, client, model)
-    logger.warning("Unknown assessment provider: %r", provider)
-    raise AssessmentError("Assessment service is temporarily unavailable.")
+        report = _generate_with_anthropic(cv_safe_copy, signals, role_context, client, model)
+    elif provider == "groq":
+        report = _generate_with_groq(cv_safe_copy, signals, role_context, client, model)
+    else:
+        logger.warning("Unknown assessment provider: %r", provider)
+        raise AssessmentError("Assessment service is temporarily unavailable.")
+
+    report.provider_used = provider
+    return report

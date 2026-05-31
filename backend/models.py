@@ -1,5 +1,8 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+
+import uuid
+
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 
 
@@ -62,9 +65,20 @@ class AssessmentReportModel(BaseModel):
 class AssessmentRequest(BaseModel):
     """Phase 2 review note: the endpoint re-runs the scanner + heuristic engine
     on `cv_text` server-side. Clients no longer supply match_analysis or
-    risk_signals — that would be a trust-the-client antipattern."""
-    cv_text: str = Field(min_length=1, max_length=20000)
+    risk_signals — that would be a trust-the-client antipattern.
+
+    Phase 3: either `cv_text` (current behaviour: re-scan in memory, do not
+    persist) or `scan_id` (load the persisted Scan, generate, persist the
+    resulting Assessment linked by FK). Exactly one of the two is required."""
+    cv_text: str | None = Field(default=None, max_length=20000)
+    scan_id: uuid.UUID | None = None
     role_context: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_text_or_id(self):
+        if not self.cv_text and not self.scan_id:
+            raise ValueError("Must provide either cv_text or scan_id.")
+        return self
 
 
 class ScanResult(BaseModel):

@@ -33,7 +33,7 @@ from trust_report import build_trust_report
 from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
-from db_models import Scan
+from db_models import Assessment, Scan
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
@@ -262,41 +262,85 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
 
 
 @app.post("/assessment", response_model=AssessmentReportModel)
-def assessment_endpoint(req: AssessmentRequest) -> AssessmentReportModel:
-    """Generate a structured ProofHire v1 candidate assessment via Claude.
+def assessment_endpoint(
+    req: AssessmentRequest,
+    db: Session | None = Depends(get_db),
+) -> AssessmentReportModel:
+    """Generate a structured ProofHire v1 candidate assessment.
 
-    Re-runs the Phase-1 scanner + heuristic engine on `cv_text` server-side, so
-    the structured signals sent to Claude are SERVER-derived and tamper-free.
-    The scrubbed `safe_copy_text` (not the raw input) is what reaches the model.
-    Requires ANTHROPIC_API_KEY on the server; returns 503 otherwise.
+    Two input modes:
+    - `scan_id`: load the persisted Scan row, reuse its safe_copy_text + signals
+      (no re-scan, no extra cost), persist the resulting Assessment linked by FK.
+    - `cv_text`: re-run the Phase-1 pipeline in memory and generate. NOT persisted
+      (Phase 4 with auth will revisit; for now anonymous calls stay anonymous).
+    Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
-    # Re-derive everything server-side. Never trust client-supplied signals.
-    injection, pii, ai_score = scan_text(req.cv_text)
-    risk_level, risk_score = compute_risk(injection, pii, ai_score)
-    match = analyze_match(req.cv_text)
-    safe_copy = generate_safe_copy(req.cv_text, injection, pii)
-    if ai_score >= 0.6:
-        ai_label = "LIKELY"
-    elif ai_score >= 0.3:
-        ai_label = "POSSIBLE"
+    if req.scan_id:
+        if db is None:
+            raise HTTPException(
+                status_code=503,
+                detail="scan_id requires a configured database.",
+            )
+        scan_row = db.get(Scan, req.scan_id)
+        if scan_row is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        cv_safe_copy = scan_row.safe_copy_text
+        signals = {
+            "risk_level": scan_row.risk_level,
+            "risk_score": scan_row.risk_score,
+            "injection_count": len(scan_row.prompt_injection_findings or []),
+            "ai_text_likelihood": scan_row.ai_text_likelihood,
+            "match": scan_row.match_analysis,
+        }
     else:
-        ai_label = "UNLIKELY"
-    signals = {
-        "risk_level": risk_level,
-        "risk_score": risk_score,
-        "injection_count": len(injection),
-        "ai_text_likelihood": ai_label,
-        "match": asdict(match),
-    }
+        # cv_text path: re-derive everything server-side. Never trust client signals.
+        injection, pii, ai_score = scan_text(req.cv_text)
+        risk_level, risk_score = compute_risk(injection, pii, ai_score)
+        match = analyze_match(req.cv_text)
+        cv_safe_copy = generate_safe_copy(req.cv_text, injection, pii)
+        if ai_score >= 0.6:
+            ai_label = "LIKELY"
+        elif ai_score >= 0.3:
+            ai_label = "POSSIBLE"
+        else:
+            ai_label = "UNLIKELY"
+        signals = {
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "injection_count": len(injection),
+            "ai_text_likelihood": ai_label,
+            "match": asdict(match),
+        }
 
     try:
         report = generate_assessment_report(
-            cv_safe_copy=safe_copy,
+            cv_safe_copy=cv_safe_copy,
             signals=signals,
             role_context=req.role_context,
         )
     except AssessmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+    # Persist the Assessment only when it is anchored to a Scan in the DB.
+    # cv_text-only assessments stay ephemeral until Phase 4 (auth) introduces
+    # per-recruiter-firm history.
+    if req.scan_id and db is not None:
+        try:
+            row = Assessment(
+                scan_id=req.scan_id,
+                framework=report.framework,
+                headline=report.headline,
+                dimensions=[asdict(d) for d in report.dimensions],
+                overall_recommendation=report.overall_recommendation,
+                overall_score=report.overall_score,
+                next_steps=report.next_steps,
+                provider_used=report.provider_used or "unknown",
+            )
+            db.add(row)
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Failed to persist assessment")
 
     return AssessmentReportModel(
         framework=report.framework,

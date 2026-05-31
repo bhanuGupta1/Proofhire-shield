@@ -379,6 +379,111 @@ def test_scan_cv_response_scan_id_matches_db_row(client_with_db, db_session):
     assert str(rows[0].id) == body_scan_id
 
 
+# ── Phase 3: /assessment with scan_id input + persistence ────────────────────
+
+def _make_persisted_scan(db_session):
+    from db_models import Scan
+
+    scan = Scan(
+        filename="cv.pdf",
+        risk_level="GREEN",
+        risk_score=0,
+        prompt_injection_findings=[],
+        pii_findings=[],
+        ai_text_likelihood="UNLIKELY",
+        ai_text_score=0.0,
+        safe_copy_text="Sarah Chen, Senior Engineer. Python, AWS.",
+        summary="No issues detected.",
+        match_analysis={"experience_tier": "Senior", "summary": "x"},
+    )
+    db_session.add(scan)
+    db_session.commit()
+    db_session.refresh(scan)
+    return scan
+
+
+def test_assessment_with_scan_id_loads_and_persists(client_with_db, db_session, monkeypatch):
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    from db_models import Assessment
+    import main as main_module
+
+    scan = _make_persisted_scan(db_session)
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="Senior Python engineer",
+        dimensions=[AssessmentDimension(name="Profile", text="Y")],
+        overall_recommendation="Worth interviewing",
+        overall_score=80,
+        next_steps=["schedule interview", "verify AWS", "check refs"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client_with_db.post(
+        "/assessment",
+        json={"scan_id": str(scan.id), "role_context": "Backend at fintech."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["overall_score"] == 80
+    assert body["framework"] == FRAMEWORK_NAME
+
+    rows = db_session.query(Assessment).all()
+    assert len(rows) == 1
+    assert str(rows[0].scan_id) == str(scan.id)
+    assert rows[0].provider_used == "anthropic"
+    assert rows[0].overall_score == 80
+
+
+def test_assessment_with_scan_id_but_no_db_returns_503():
+    r = client.post(
+        "/assessment",
+        json={"scan_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert r.status_code == 503
+
+
+def test_assessment_with_unknown_scan_id_returns_404(client_with_db):
+    r = client_with_db.post(
+        "/assessment",
+        json={"scan_id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert r.status_code == 404
+
+
+def test_assessment_requires_either_cv_text_or_scan_id():
+    r = client.post("/assessment", json={"role_context": "Backend engineer"})
+    assert r.status_code == 422
+
+
+def test_assessment_with_cv_text_path_does_not_persist(client_with_db, db_session, monkeypatch):
+    """cv_text-only assessments are intentionally NOT persisted in Phase 3 —
+    Phase 4 (auth) will revisit per-recruiter history."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    from db_models import Assessment
+    import main as main_module
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="x",
+        dimensions=[AssessmentDimension(name="P", text="Q")],
+        overall_recommendation="ok",
+        overall_score=50,
+        next_steps=["a", "b", "c"],
+        provider_used="groq",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
+    r = client_with_db.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer."},
+    )
+    assert r.status_code == 200
+    rows = db_session.query(Assessment).all()
+    assert len(rows) == 0  # explicitly NOT persisted
+
+
 def test_assessment_endpoint_ignores_client_supplied_trust_claims(monkeypatch):
     """The endpoint must not honour client-supplied match_analysis / risk_signals.
     Pydantic ignores extra fields by default, so smuggling them is silently dropped."""
