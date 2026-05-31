@@ -162,10 +162,14 @@ that produces a structured assessment report shown to the recruiter.
   (Risk/Match/Proof/Assessment) from `GET /scans/{id}` — Proof's PDF re-download
   is disabled for history-loaded scans, which carry no uploaded File. Privacy
   invariant intact: `original_text` is still never persisted; the detail endpoint
-  echoes `safe_copy_text`. **243 tests; bandit 0 HIGH/MED (1 pre-existing LOW);
-  tsc clean.** semgrep + production `vite build` pending local run (sandbox has
-  no semgrep and lacks the linux rollup native binary). End-of-phase Codex review
-  (P6) prompt prepared; external adversarial pass pending Bhanu.
+  echoes `safe_copy_text`. End-of-phase Codex review (P6) returned
+  **HIGH=0 MED=0 LOW=0** — no fix commits needed; reviewer confirmed
+  `org_id` derives only from the verified token claim, list + detail + assessment
+  paths share the same scoped predicate, and the no-org branch stays narrowed to
+  `user_id == current_user`. **243 tests; bandit 0 HIGH/MED (1 pre-existing LOW);
+  tsc clean; vite build clean (210 KB JS / 61 KB gzip).** semgrep was not run
+  locally (the pipx semgrep on Windows crashes on rule-pack download with
+  `UnicodeDecodeError`); CI runs bandit only, which stays the enforced gate.
 - Phases 6-8: pending Bhanu sign-off on Phase 5.
 
 ### Phase 4 answers from Bhanu (2026-05-31)
