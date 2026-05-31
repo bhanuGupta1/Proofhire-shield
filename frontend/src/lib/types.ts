@@ -86,3 +86,12 @@ export interface ScanListResponse {
   scans: ScanSummary[]
   count: number
 }
+
+export interface BillingStatus {
+  plan: 'free' | 'pro'
+  is_pro: boolean
+  scans_used: number
+  scan_limit: number
+  current_period_end: string | null
+  status: string | null
+}

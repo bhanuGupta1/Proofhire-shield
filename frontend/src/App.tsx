@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ClerkProvider,
   OrganizationSwitcher,
@@ -15,8 +15,10 @@ import { MatchTab } from './components/tabs/MatchTab'
 import { ProofTab } from './components/tabs/ProofTab'
 import { AssessmentTab } from './components/tabs/AssessmentTab'
 import { JDMatcher } from './components/JDMatcher'
-import { scanCV, getScan } from './lib/api'
-import type { ScanResult } from './lib/types'
+import { QuotaMeter } from './components/QuotaMeter'
+import { PricingModal } from './components/PricingModal'
+import { scanCV, getScan, getBillingStatus, startCheckout, openBillingPortal } from './lib/api'
+import type { ScanResult, BillingStatus } from './lib/types'
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
 
@@ -39,6 +41,57 @@ function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('risk')
   // Bumped after every successful authed scan so HistoryView re-fetches.
   const [historyKey, setHistoryKey] = useState(0)
+  const [billing, setBilling] = useState<BillingStatus | null>(null)
+  const [pricingOpen, setPricingOpen] = useState(false)
+  const [checkoutBusy, setCheckoutBusy] = useState(false)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+
+  async function refreshBilling() {
+    if (!isSignedIn) {
+      setBilling(null)
+      return
+    }
+    try {
+      const token = await getToken()
+      if (!token) return
+      setBilling(await getBillingStatus(token))
+    } catch {
+      // No database / billing unconfigured / offline — hide the meter rather
+      // than block the scan flow. Mirrors the backend's degrade-open posture.
+      setBilling(null)
+    }
+  }
+
+  useEffect(() => {
+    void refreshBilling()
+  }, [isSignedIn])
+
+  async function handleCheckout() {
+    setCheckoutBusy(true)
+    setCheckoutError(null)
+    try {
+      const token = await getToken()
+      if (!token) {
+        setCheckoutError('Please sign in to upgrade.')
+        return
+      }
+      window.location.href = await startCheckout(token)
+    } catch (e) {
+      setCheckoutError((e as Error).message)
+    } finally {
+      setCheckoutBusy(false)
+    }
+  }
+
+  async function handleManage() {
+    try {
+      const token = await getToken()
+      if (!token) return
+      window.location.href = await openBillingPortal(token)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
 
   async function handleFile(f: File) {
     setFile(f)
@@ -61,6 +114,7 @@ function AppContent() {
       setError('Could not reach the scan service. Is the backend running?')
     } finally {
       setLoading(false)
+      void refreshBilling()
     }
   }
 
@@ -114,7 +168,14 @@ function AppContent() {
 
       <main className="mx-auto max-w-5xl px-6 py-8 space-y-8">
         <SignedIn>
-          <HistoryView refreshKey={historyKey} onSelect={handleSelectScan} />
+          <div className="space-y-4">
+            <QuotaMeter
+              status={billing}
+              onUpgrade={() => setPricingOpen(true)}
+              onManage={handleManage}
+            />
+            <HistoryView refreshKey={historyKey} onSelect={handleSelectScan} />
+          </div>
         </SignedIn>
 
         <FileUpload onFile={handleFile} loading={loading} />
@@ -145,7 +206,13 @@ function AppContent() {
             {activeTab === 'risk' && <RiskTab result={result} />}
             {activeTab === 'match' && <MatchTab result={result} />}
             {activeTab === 'proof' && <ProofTab result={result} file={file} />}
-            {activeTab === 'assessment' && <AssessmentTab result={result} />}
+            {activeTab === 'assessment' && (
+              <AssessmentTab
+                result={result}
+                billing={billing}
+                onUpgrade={() => setPricingOpen(true)}
+              />
+            )}
 
             <div className="mt-8">
               <JDMatcher cvText={result.safe_copy_text} />
@@ -153,6 +220,17 @@ function AppContent() {
           </div>
         )}
       </main>
+
+      <PricingModal
+        open={pricingOpen}
+        onClose={() => {
+          setPricingOpen(false)
+          setCheckoutError(null)
+        }}
+        onUpgrade={handleCheckout}
+        busy={checkoutBusy}
+        error={checkoutError}
+      />
     </div>
   )
 }

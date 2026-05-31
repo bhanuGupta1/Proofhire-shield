@@ -1,5 +1,6 @@
 import type {
   AssessmentReport,
+  BillingStatus,
   JDMatchResult,
   ScanListResponse,
   ScanResponse,
@@ -13,6 +14,21 @@ function bearer(token: string | null | undefined): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// Pull a human-readable message out of an error response. FastAPI sends
+// `{ "detail": "..." }`; fall back to the raw body, then the status code.
+async function errorDetail(res: Response): Promise<string> {
+  const raw = await res.text()
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed.detail === 'string') {
+      return parsed.detail
+    }
+  } catch {
+    // body wasn't JSON — use the raw text below
+  }
+  return raw || `Request failed (${res.status})`
+}
+
 export async function scanCV(file: File, token?: string | null): Promise<ScanResponse> {
   const form = new FormData()
   form.append('file', file)
@@ -24,8 +40,7 @@ export async function scanCV(file: File, token?: string | null): Promise<ScanRes
     body: form,
   })
   if (!res.ok) {
-    const text = await res.text()
-    return { ok: false, result: null, error: text }
+    return { ok: false, result: null, error: await errorDetail(res) }
   }
   return res.json()
 }
@@ -104,4 +119,43 @@ export async function getScan(scanId: string, token: string): Promise<ScanResult
     throw new Error(`Get scan failed (${res.status})`)
   }
   return res.json()
+}
+
+export async function getBillingStatus(token: string): Promise<BillingStatus> {
+  const res = await fetch(`${API_BASE}/billing/status`, {
+    method: 'GET',
+    headers: bearer(token),
+  })
+  if (!res.ok) {
+    throw new Error(`Billing status failed (${res.status})`)
+  }
+  return res.json()
+}
+
+// POST endpoints require a Content-Length header (server middleware), so we send
+// an empty JSON body. Both return a Stripe-hosted URL the caller redirects to.
+export async function startCheckout(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/billing/checkout-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
+  if (!res.ok) {
+    throw new Error(await errorDetail(res))
+  }
+  const data = (await res.json()) as { url: string }
+  return data.url
+}
+
+export async function openBillingPortal(token: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/billing/portal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
+  if (!res.ok) {
+    throw new Error(await errorDetail(res))
+  }
+  const data = (await res.json()) as { url: string }
+  return data.url
 }

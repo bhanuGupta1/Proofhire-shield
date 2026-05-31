@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-import type { ScanResult, AssessmentReport } from '../../lib/types'
+import type { ScanResult, AssessmentReport, BillingStatus } from '../../lib/types'
 import { generateAssessment } from '../../lib/api'
 
 interface Props {
   result: ScanResult
+  billing: BillingStatus | null
+  onUpgrade: () => void
 }
 
 function scoreColour(score: number): string {
@@ -13,7 +15,7 @@ function scoreColour(score: number): string {
   return 'text-red-600 border-red-500'
 }
 
-export function AssessmentTab({ result }: Props) {
+export function AssessmentTab({ result, billing, onUpgrade }: Props) {
   const { getToken, isSignedIn } = useAuth()
   const [roleContext, setRoleContext] = useState('')
   const [report, setReport] = useState<AssessmentReport | null>(null)
@@ -32,6 +34,34 @@ export function AssessmentTab({ result }: Props) {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Assessment is Pro-only server-side. When we positively know the signed-in
+  // caller is on Free, show an upgrade CTA instead of letting them hit a 402.
+  // Unknown billing (anonymous, or a deployment without a database) falls
+  // through to the form — the backend degrades open in those cases.
+  const proRequired = billing !== null && !billing.is_pro
+  if (proRequired && !report) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6 text-center">
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-2xl">
+          🔒
+        </div>
+        <h3 className="mb-1 text-sm font-semibold text-gray-800">
+          AI assessment reports are a Pro feature
+        </h3>
+        <p className="mx-auto mb-4 max-w-sm text-xs text-gray-500">
+          Upgrade to generate a structured candidate assessment with strengths,
+          concerns, interview focus, verifiability, and a recommendation.
+        </p>
+        <button
+          onClick={onUpgrade}
+          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Upgrade to Pro
+        </button>
+      </div>
+    )
   }
 
   if (!report) {
