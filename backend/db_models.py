@@ -44,6 +44,11 @@ class Scan(Base):
     # predate auth survive the migration; new rows always set it when an
     # authenticated user is the caller.
     user_id = Column(String(64), nullable=True, index=True)
+    # Phase 5: Clerk organization id (when the creator was acting inside an
+    # org context). Every member of that org sees scans tagged with the same
+    # org_id via the per-org list / detail queries. Nullable so solo users
+    # (no active org) and Phase-3/4 rows survive without backfill.
+    org_id = Column(String(64), nullable=True, index=True)
     filename = Column(String(256), nullable=False)
     risk_level = Column(String(8), nullable=False)
     risk_score = Column(Integer, nullable=False)
@@ -71,6 +76,9 @@ class Assessment(Base):
     # not always need a join, and so an orphaned Phase-3 scan cannot be silently
     # reassigned by linking a new assessment to it.
     user_id = Column(String(64), nullable=True, index=True)
+    # Phase 5: denormalised Clerk org_id with the same rationale as user_id —
+    # org-scoped queries (list-my-org's-assessments) avoid an extra join.
+    org_id = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
     framework = Column(String(64), nullable=False)
     headline = Column(Text, nullable=False)

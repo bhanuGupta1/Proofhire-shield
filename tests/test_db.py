@@ -56,6 +56,17 @@ def test_phase4_user_id_column_present_on_both_tables():
     assert Assessment.__table__.columns["user_id"].nullable is True
 
 
+def test_phase5_org_id_column_present_on_both_tables():
+    """Phase 5 (Clerk Organizations): each row optionally carries the active
+    org_id at creation time. Nullable so solo users + Phase-3/4 rows are intact."""
+    scan_cols = {c.name for c in Scan.__table__.columns}
+    assessment_cols = {c.name for c in Assessment.__table__.columns}
+    assert "org_id" in scan_cols
+    assert "org_id" in assessment_cols
+    assert Scan.__table__.columns["org_id"].nullable is True
+    assert Assessment.__table__.columns["org_id"].nullable is True
+
+
 # ── In-memory SQLite round-trips (uses conftest.db_session fixture) ──────────
 
 def test_persist_scan_round_trip(db_session):

@@ -81,17 +81,41 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> str
     return user_id
 
 
-def get_current_user_optional(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
-    """Return user_id when a valid token is present, None otherwise. No raises;
-    used by endpoints that work for anonymous users with degraded functionality
-    (no persistence, no history)."""
+def _claims_or_none(authorization: Optional[str]) -> Optional[dict]:
+    """Verify the bearer token and return claims, or None on any failure / when
+    auth is unconfigured. Shared by all *_optional dependencies so the JWT is
+    only decoded once per request (FastAPI caches dependency results)."""
     if not is_auth_configured():
         return None
     token = _extract_bearer(authorization)
     if not token:
         return None
     try:
-        claims = _verify_token(token)
+        return _verify_token(token)
     except jwt.PyJWTError:
         return None
-    return claims.get("sub")
+
+
+def get_current_user_optional(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
+    """Return user_id when a valid token is present, None otherwise. No raises;
+    used by endpoints that work for anonymous users with degraded functionality
+    (no persistence, no history)."""
+    claims = _claims_or_none(authorization)
+    return claims.get("sub") if claims else None
+
+
+def get_current_org_optional(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
+    """Return the active Clerk organisation id from the session token, or None.
+    Clerk includes `org_id` when the user is acting inside an org context;
+    solo users get None. Phase-5 endpoints use this to share scans across an
+    org's members."""
+    claims = _claims_or_none(authorization)
+    return claims.get("org_id") if claims else None
+
+
+def get_current_org_role_optional(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
+    """Return the caller's role inside the active org (Clerk's `org_role`,
+    typically "admin" or "basic_member"), or None. Used by the frontend to
+    gate admin-only UI; the backend does not enforce role-based ACLs yet."""
+    claims = _claims_or_none(authorization)
+    return claims.get("org_role") if claims else None

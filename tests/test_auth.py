@@ -131,3 +131,44 @@ def test_get_current_user_optional_returns_none_on_invalid_token(configured_auth
 
     monkeypatch.setattr(configured_auth, "_verify_token", fake)
     assert configured_auth.get_current_user_optional(authorization="Bearer x") is None
+
+
+# ── get_current_org_optional + get_current_org_role_optional (Phase 5) ───────
+
+def test_get_current_org_optional_returns_none_when_unconfigured():
+    os.environ.pop("CLERK_ISSUER", None)
+    os.environ.pop("CLERK_JWKS_URL", None)
+    importlib.reload(auth)
+    assert auth.get_current_org_optional(authorization="Bearer abc") is None
+    assert auth.get_current_org_role_optional(authorization="Bearer abc") is None
+
+
+def test_get_current_org_optional_returns_none_on_no_token(configured_auth):
+    assert configured_auth.get_current_org_optional(authorization=None) is None
+    assert configured_auth.get_current_org_role_optional(authorization=None) is None
+
+
+def test_get_current_org_optional_returns_org_id_on_valid_token(configured_auth, monkeypatch):
+    monkeypatch.setattr(
+        configured_auth,
+        "_verify_token",
+        lambda t: {"sub": "user_x", "org_id": "org_y", "org_role": "admin"},
+    )
+    assert configured_auth.get_current_org_optional(authorization="Bearer t") == "org_y"
+    assert configured_auth.get_current_org_role_optional(authorization="Bearer t") == "admin"
+
+
+def test_get_current_org_optional_returns_none_when_no_org_in_token(configured_auth, monkeypatch):
+    """User signed in but not in an org context — Clerk omits org_id."""
+    monkeypatch.setattr(configured_auth, "_verify_token", lambda t: {"sub": "user_x"})
+    assert configured_auth.get_current_org_optional(authorization="Bearer t") is None
+    assert configured_auth.get_current_org_role_optional(authorization="Bearer t") is None
+
+
+def test_get_current_org_optional_returns_none_on_invalid_token(configured_auth, monkeypatch):
+    def fake(token):
+        raise pyjwt.InvalidTokenError("bad")
+
+    monkeypatch.setattr(configured_auth, "_verify_token", fake)
+    assert configured_auth.get_current_org_optional(authorization="Bearer x") is None
+    assert configured_auth.get_current_org_role_optional(authorization="Bearer x") is None
