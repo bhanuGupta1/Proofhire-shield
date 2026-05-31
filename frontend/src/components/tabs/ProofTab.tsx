@@ -4,13 +4,14 @@ import type { ScanResult } from '../../lib/types'
 
 interface Props {
   result: ScanResult
-  file: File
+  file?: File | null
 }
 
 export function ProofTab({ result, file }: Props) {
   const [downloading, setDownloading] = useState(false)
 
   async function downloadTrustReport() {
+    if (!file) return
     setDownloading(true)
     try {
       const form = new FormData()
@@ -65,7 +66,7 @@ export function ProofTab({ result, file }: Props) {
 
       <button
         type="button"
-        disabled={downloading}
+        disabled={downloading || !file}
         onClick={downloadTrustReport}
         className="flex items-center gap-2 rounded-md bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
       >
@@ -74,6 +75,12 @@ export function ProofTab({ result, file }: Props) {
         </svg>
         {downloading ? 'Generating…' : 'Download Trust Report PDF'}
       </button>
+
+      {!file && (
+        <p className="text-xs text-amber-700">
+          Re-upload this CV to generate its Trust Report PDF.
+        </p>
+      )}
 
       <p className="text-xs text-gray-400">
         This report is your candidate intelligence record. Claims flagged should be confirmed

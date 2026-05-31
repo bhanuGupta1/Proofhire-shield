@@ -94,3 +94,14 @@ export async function listScans(token: string): Promise<ScanListResponse> {
   }
   return res.json()
 }
+
+export async function getScan(scanId: string, token: string): Promise<ScanResult> {
+  const res = await fetch(`${API_BASE}/scans/${scanId}`, {
+    method: 'GET',
+    headers: bearer(token),
+  })
+  if (!res.ok) {
+    throw new Error(`Get scan failed (${res.status})`)
+  }
+  return res.json()
+}

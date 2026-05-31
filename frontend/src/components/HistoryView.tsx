@@ -24,9 +24,10 @@ function formatDate(iso: string): string {
 
 interface Props {
   refreshKey?: number
+  onSelect?: (scanId: string) => void
 }
 
-export function HistoryView({ refreshKey = 0 }: Props) {
+export function HistoryView({ refreshKey = 0, onSelect }: Props) {
   const { getToken, orgId } = useAuth()
   const [scans, setScans] = useState<ScanSummary[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -98,18 +99,21 @@ export function HistoryView({ refreshKey = 0 }: Props) {
       </div>
       <ul className="space-y-2">
         {scans.map((s) => (
-          <li
-            key={s.scan_id}
-            className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-          >
-            <span
-              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${RISK_PILL[s.risk_level]}`}
+          <li key={s.scan_id}>
+            <button
+              type="button"
+              onClick={() => onSelect?.(s.scan_id)}
+              className="flex w-full items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-left transition-colors hover:border-blue-300 hover:bg-blue-50"
             >
-              {s.risk_level}
-            </span>
-            <span className="grow truncate text-sm text-gray-800">{s.filename}</span>
-            <span className="shrink-0 text-xs text-gray-400">{formatDate(s.created_at)}</span>
-            <span className="shrink-0 text-xs text-gray-400">{s.risk_score}/100</span>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${RISK_PILL[s.risk_level]}`}
+              >
+                {s.risk_level}
+              </span>
+              <span className="grow truncate text-sm text-gray-800">{s.filename}</span>
+              <span className="shrink-0 text-xs text-gray-400">{formatDate(s.created_at)}</span>
+              <span className="shrink-0 text-xs text-gray-400">{s.risk_score}/100</span>
+            </button>
           </li>
         ))}
       </ul>

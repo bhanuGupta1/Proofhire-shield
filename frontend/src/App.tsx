@@ -15,7 +15,7 @@ import { MatchTab } from './components/tabs/MatchTab'
 import { ProofTab } from './components/tabs/ProofTab'
 import { AssessmentTab } from './components/tabs/AssessmentTab'
 import { JDMatcher } from './components/JDMatcher'
-import { scanCV } from './lib/api'
+import { scanCV, getScan } from './lib/api'
 import type { ScanResult } from './lib/types'
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
@@ -64,6 +64,26 @@ function AppContent() {
     }
   }
 
+  async function handleSelectScan(scanId: string) {
+    setError(null)
+    setLoading(true)
+    try {
+      const token = await getToken()
+      if (!token) {
+        setError('Sign in to open a saved scan.')
+        return
+      }
+      const r = await getScan(scanId, token)
+      setResult(r)
+      setFile(null)
+      setActiveTab('risk')
+    } catch {
+      setError('Could not open that scan.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="border-b border-gray-200 bg-white px-6 py-4">
@@ -94,7 +114,7 @@ function AppContent() {
 
       <main className="mx-auto max-w-5xl px-6 py-8 space-y-8">
         <SignedIn>
-          <HistoryView refreshKey={historyKey} />
+          <HistoryView refreshKey={historyKey} onSelect={handleSelectScan} />
         </SignedIn>
 
         <FileUpload onFile={handleFile} loading={loading} />
@@ -105,7 +125,7 @@ function AppContent() {
           </div>
         )}
 
-        {result && file && (
+        {result && (
           <div>
             <div className="mb-6 flex gap-1 border-b border-gray-200">
               {TABS.map((t) => (
