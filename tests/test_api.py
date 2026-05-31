@@ -452,9 +452,34 @@ def test_assessment_with_unknown_scan_id_returns_404(client_with_db):
     assert r.status_code == 404
 
 
-def test_assessment_requires_either_cv_text_or_scan_id():
-    r = client.post("/assessment", json={"role_context": "Backend engineer"})
-    assert r.status_code == 422
+def test_assessment_requires_exactly_one_of_cv_text_or_scan_id():
+    # Neither → 422.
+    r1 = client.post("/assessment", json={"role_context": "Backend engineer"})
+    assert r1.status_code == 422
+    # Both → 422 (we don't silently drop cv_text in favour of scan_id).
+    r2 = client.post(
+        "/assessment",
+        json={
+            "cv_text": "Sarah Chen, Senior Engineer.",
+            "scan_id": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert r2.status_code == 422
+
+
+def test_trust_report_does_not_persist_scan_when_db_available(client_with_db, db_session):
+    """/trust-report uses scan_cv internally but with persist=False — the PDF
+    endpoint must not double-write a scan row that the caller neither asked for
+    nor receives the scan_id of."""
+    from db_models import Scan
+
+    r = client_with_db.post(
+        "/trust-report",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert db_session.query(Scan).count() == 0
 
 
 def test_assessment_with_cv_text_path_does_not_persist(client_with_db, db_session, monkeypatch):

@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_PERSISTED_TEXT_CHARS = 64 * 1024  # 64 KB cap on text fields written to DB
 _ALLOWED_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -106,6 +107,7 @@ def health() -> dict[str, str]:
 async def scan_cv(
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
+    persist: bool = True,
 ) -> ScanResponse:
     # Content-type guard
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
@@ -202,18 +204,20 @@ async def scan_cv(
     # Persistence is best-effort. The scan succeeded in memory; if the DB write
     # fails we still return a 200 with the result, just without a scan_id.
     # Only safe_copy_text is stored — original_text is never persisted (privacy).
-    if db is not None:
+    # Text fields are capped to _MAX_PERSISTED_TEXT_CHARS so unauthenticated
+    # callers cannot rapidly fill storage by uploading near-cap text repeatedly.
+    if db is not None and persist:
         try:
             row = Scan(
-                filename=result.filename,
+                filename=result.filename[:256],
                 risk_level=result.risk_level,
                 risk_score=result.risk_score,
                 prompt_injection_findings=[f.model_dump() for f in result.prompt_injection_findings],
                 pii_findings=[f.model_dump() for f in result.pii_findings],
                 ai_text_likelihood=result.ai_text_likelihood,
                 ai_text_score=result.ai_text_score,
-                safe_copy_text=result.safe_copy_text,
-                summary=result.summary,
+                safe_copy_text=result.safe_copy_text[:_MAX_PERSISTED_TEXT_CHARS],
+                summary=result.summary[:_MAX_PERSISTED_TEXT_CHARS],
                 match_analysis=result.match_analysis.model_dump(),
             )
             db.add(row)
@@ -235,8 +239,10 @@ async def trust_report(
     """Re-scan the CV and return a Trust Report PDF."""
     # Pass db explicitly: when this endpoint calls scan_cv as a regular Python
     # function the FastAPI Depends machinery does not fire, so the default value
-    # would be the Depends marker rather than a real session.
-    scan = await scan_cv(file, db=db)
+    # would be the Depends marker rather than a real session. persist=False so
+    # PDF generation does not silently double-write a scan row that the caller
+    # neither requested nor receives a scan_id for.
+    scan = await scan_cv(file, db=db, persist=False)
     if not scan.result:
         raise HTTPException(status_code=500, detail="Scan failed.")
     pdf_bytes = build_trust_report(scan.result)
@@ -292,6 +298,9 @@ def assessment_endpoint(
             "ai_text_likelihood": scan_row.ai_text_likelihood,
             "match": scan_row.match_analysis,
         }
+        # End the read transaction before the slow LLM call so we don't pin a
+        # pooled connection while waiting on Anthropic/Groq.
+        db.commit()
     else:
         # cv_text path: re-derive everything server-side. Never trust client signals.
         injection, pii, ai_score = scan_text(req.cv_text)

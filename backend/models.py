@@ -75,9 +75,13 @@ class AssessmentRequest(BaseModel):
     role_context: str | None = Field(default=None, max_length=2000)
 
     @model_validator(mode="after")
-    def require_text_or_id(self):
-        if not self.cv_text and not self.scan_id:
-            raise ValueError("Must provide either cv_text or scan_id.")
+    def exactly_one_input(self):
+        # Reject BOTH-present as well as NEITHER-present. The two input modes are
+        # mutually exclusive: scan_id means "load the saved scan and reuse it";
+        # cv_text means "re-derive in memory". Sending both silently dropped
+        # cv_text under the old "either" check, which weakened the API contract.
+        if bool(self.cv_text) == bool(self.scan_id):
+            raise ValueError("Provide exactly one of cv_text or scan_id.")
         return self
 
 
