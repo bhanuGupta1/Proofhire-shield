@@ -66,10 +66,14 @@ def test_entry_from_keyword():
     tier, years = _compute_experience_tier(text)
     assert tier == "Entry"
 
-def test_principal_from_keyword():
-    text = "Principal Engineer at Stripe, leading a team of 12."
+def test_principal_from_keyword_with_years():
+    """Phase 9 — a seniority keyword alone is no longer enough; years must
+    also be present. The combined "12 years + Principal" still maps to
+    Principal / Lead."""
+    text = "Principal Engineer at Stripe, 12 years leading platform teams."
     tier, years = _compute_experience_tier(text)
     assert tier == "Principal / Lead"
+    assert years == 12
 
 def test_mid_from_years():
     text = "3 years experience building REST APIs."
@@ -77,9 +81,19 @@ def test_mid_from_years():
     assert tier == "Mid-level"
     assert years == 3
 
-def test_senior_from_seniority_word():
+def test_senior_keyword_without_years_floors_to_entry():
+    """Phase 9 — a CV that says "Senior Software Engineer" with no years
+    quantifier is treated as Entry until the candidate provides evidence."""
     text = "Senior Software Engineer at Google."
-    tier, _ = _compute_experience_tier(text)
+    tier, years = _compute_experience_tier(text)
+    assert years is None
+    assert tier == "Entry"
+
+def test_senior_keyword_with_years_works():
+    """The combined "Senior + 6 years" form still maps to Senior."""
+    text = "Senior Software Engineer at Google. 6 years of backend experience."
+    tier, years = _compute_experience_tier(text)
+    assert years == 6
     assert tier == "Senior"
 
 def test_no_experience_info_defaults_to_entry():
@@ -97,6 +111,40 @@ def test_implausible_years_ignored():
 def test_zero_years_ignored():
     _, years = _compute_experience_tier("0 years of experience.")
     assert years is None
+
+
+# Phase 9 — hard-floor regression: a candidate with no years detected must
+# stay Entry even when seniority keywords leak in from unrelated text.
+
+def test_associate_degree_does_not_inflate_to_mid_level():
+    """Bug: a candidate with no work experience whose CV mentions
+    "Associate's degree" used to hit the `associate` seniority keyword and
+    inflate to Mid-level. After the Phase 9 floor it stays Entry."""
+    tier, years = _compute_experience_tier(
+        "Recent graduate. Associate's degree in Software Engineering."
+    )
+    assert years is None
+    assert tier == "Entry"
+
+
+def test_midwest_does_not_inflate_to_mid_level():
+    """Bug: "Midwest" / "midfield" etc. were hitting the `mid` seniority
+    keyword on no-experience CVs."""
+    tier, years = _compute_experience_tier(
+        "Looking for opportunities across the Midwest region."
+    )
+    assert years is None
+    assert tier == "Entry"
+
+
+def test_seniority_word_with_years_still_works():
+    """The floor only applies when no years are detected; an explicit
+    multi-year claim still gets the right tier."""
+    tier, years = _compute_experience_tier(
+        "Senior software engineer with 8 years of Python experience."
+    )
+    assert years == 8
+    assert tier == "Senior"
 
 
 # ── Education level ──────────────────────────────────────────────────────────────

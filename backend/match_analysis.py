@@ -136,6 +136,15 @@ def _compute_experience_tier(text: str) -> tuple[str, int | None]:
 
     final_score = max(years_score, seniority_score)
     tier = _TIER_LABELS.get(final_score, "Entry")
+
+    # Phase 9 — hard floor: a candidate with no detectable years of
+    # experience is always Entry, regardless of any seniority keyword that
+    # may have leaked in from unrelated text. ("Associate's degree" hits the
+    # "associate" seniority keyword and used to inflate to Mid-level; same
+    # for "Midwest", "leading the team" used as a verb phrase, etc.)
+    if not max_years:
+        tier = "Entry"
+
     return tier, max_years
 
 
