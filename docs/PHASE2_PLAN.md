@@ -185,6 +185,51 @@ Carried into Phase 9:
   per-firm spend dashboard — the current request_id work is the
   prerequisite, the dashboard is the next chapter.
 
+### Phase 9 — Recruiter co-pilot + demo-access + Free assessment cap (2026-06-04)
+
+Three product moves layered on Phase 8:
+1. Recruiter co-pilot — POST /assessment/followup answers one Pro-gated
+   plain-prose question about a saved scan. Same defence-in-depth as
+   /assessment: all three (signals, CV safe-copy, question) entity-escaped,
+   wrapped in delimited blocks, system prompt instructs the model to
+   refuse imperatives inside any block including the question itself.
+2. Demo access — the Phase-7.3 Pro gate on POST /assessment is REMOVED.
+   Any signed-in caller can run a full report. Anonymous still 401/503.
+3. Free assessment cap — to bound the LLM spend re-introduced by (2),
+   add `monthly_usage.assessments_used` (migration 0009) + a Phase-8.1-style
+   consume_assessment_or_refuse: Free at 5/month, Pro unlimited.
+
+Frontend additions (security-irrelevant, summarised for context only):
+quota meter pill + at-cap upgrade card on the Assessment tab; first-
+visit 4-step OnboardingTour with a persistent "?" launcher.
+
+Closed 2026-06-04 (9.1-9.5 + F1 + F2):
+- 9.1 (`172ed81`) generate_followup_answer + _build_followup_message in
+  backend/assessment.py, with provider dispatch + plain-prose responses
+  + <think>-tag stripping.
+- 9.2 (`caddbc2`) POST /assessment/followup endpoint (auth + Pro + scope
+  + in-handler 5/min per-user rate-limit).
+- 9.3 sync — fix(jd-match) (`6b58dd3`), fix(match) (`d8cda0d`), feat
+  /assessment open (`2ba5188`).
+- F1 (`1df8090`, `5b9530a`) Free assessment cap end-to-end: column +
+  migration 0009 + consume_assessment_or_refuse + /assessment gate +
+  /billing/status fields + frontend counter pill + at-cap upgrade card.
+- F2 (`b477e47`) OnboardingTour component + 4-step tour + persistent "?"
+  launcher.
+- 9.5 (`af0cbbd`) Codex P9 hardening: path-scoped pre-auth IP rate-limit
+  middleware on /assessment/followup.
+
+End-of-phase Codex P9 ran three rounds:
+- Round 1: HIGH=0 MED=0 LOW=1 (anonymous flood bypass). Fixed via
+  Depends() limit ahead of get_current_user.
+- Round 2: HIGH=0 MED=0 LOW=1 (body-validation bypass). Fixed via
+  path-scoped HTTP middleware.
+- Round 3: **HIGH=0 MED=0 LOW=0** (clean). Reviewer confirmed:
+  "the round-2 LOW is closed. … I found no new concrete, exploitable
+  Phase-9 issues."
+
+**422 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc clean; vite build clean.**
+
 ## Architecture decisions (provisional)
 
 - **Continue this repo** — don't fork. The security scanner is reusable as the
@@ -289,8 +334,20 @@ Carried into Phase 9:
   b75292f, 455f2de, af7f0ec, e0643ed, 87f5a74, fbca6ec). End-of-phase Codex
   P8 returned **HIGH=0 MED=0 LOW=0** on the first pass — no fix commits.
   **385 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc clean; vite build
-  clean.** Phase 9 carries the recruiter co-pilot, Clerk-membership webhook
-  for org-Pro revocation, and external observability backend.
+  clean.**
+- Phase 9: **COMPLETE + REVIEWED** (2026-06-04) — recruiter co-pilot
+  (POST /assessment/followup) + demo-access (/assessment opens to Free
+  signed-in callers, anon still 401/503) + a separate 5/month Free
+  assessment cap (migration 0009 adds monthly_usage.assessments_used)
+  + frontend OnboardingTour. 9.1-9.5 + F1 + F2 shipped (commits
+  172ed81, caddbc2, 6b58dd3, d8cda0d, 2ba5188, 1df8090, 5b9530a,
+  b477e47, af0cbbd). End-of-phase Codex P9 ran three rounds: round 1
+  LOW=1 (anon-flood bypass), round 2 LOW=1 (body-parse bypass on the
+  Depends() fix), round 3 **HIGH=0 MED=0 LOW=0** after the path-scoped
+  middleware. **422 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc
+  clean; vite build clean.** Carried into Phase 10: Clerk-membership
+  webhook for org-Pro revocation, external observability backend +
+  per-firm spend dashboard.
 
 ### Phase 7 answers from Bhanu (2026-06-01)
 1. **Pro scope** — per-user for v1. Org-level Pro deferred (a candidate Phase 7.5
