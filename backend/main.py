@@ -807,20 +807,30 @@ def _period_end_to_datetime(value: object) -> datetime | None:
 def _apply_subscription_event(
     db: Session, obj: dict, event_created_unix: object
 ) -> None:
-    """Upsert the caller's Subscription row from a Stripe subscription object.
+    """Upsert the per-user or per-org Subscription row from a Stripe subscription object.
 
-    Resolves the user by the user_id stamped into subscription metadata at
-    checkout, falling back to a lookup by Stripe customer id. An event we cannot
-    map is ignored (logged) so Stripe still receives its 2xx.
+    Resolves the entity by the metadata stamped at Checkout (Phase 8.4):
+    - `metadata.scope == "org"` → upsert into `org_subscriptions` keyed on
+      `metadata.org_id`.
+    - default ("user" or missing) → upsert into `subscriptions` keyed on
+      `metadata.user_id`, with a fallback lookup by Stripe customer id for
+      pre-8.4 subs whose metadata never carried `scope`.
 
-    Phase 7.7 hardening:
-    - MED #1: events whose `created` is older than this row's last_event_at are
-      skipped, so a delayed `customer.subscription.updated` cannot resurrect
-      Pro access after `customer.subscription.deleted` has been applied.
-    - MED #2: if `metadata.user_id` and `customer` point at different existing
-      rows, refuse the write — the event would link user A to user B's customer.
+    Phase 7.7 hardening (carries over per table):
+    - MED #1: events whose `created` is older than this row's last_event_at
+      are skipped, so a delayed `subscription.updated` cannot resurrect Pro
+      after `subscription.deleted`.
+    - MED #2: if metadata points at a different existing row than the
+      customer id, refuse the write rather than cross-wire two accounts.
+
+    An event we cannot map is ignored (logged) so Stripe still receives 2xx.
     """
     metadata = obj.get("metadata") or {}
+    scope = metadata.get("scope", "user")
+    if scope == "org":
+        _upsert_org_subscription(db, obj, metadata, event_created_unix)
+        return
+
     user_id = metadata.get("user_id")
     customer_id = obj.get("customer")
     status = obj.get("status")
@@ -890,18 +900,120 @@ def _apply_subscription_event(
         sub.last_event_at = event_created
 
 
+def _upsert_org_subscription(
+    db: Session, obj: dict, metadata: dict, event_created_unix: object
+) -> None:
+    """Org-scope subscription upsert. Mirrors _apply_subscription_event's
+    per-user logic but keyed on org_id against org_subscriptions."""
+    org_id = metadata.get("org_id")
+    customer_id = obj.get("customer")
+    status = obj.get("status")
+    sub_id = obj.get("id")
+    period_end = _period_end_to_datetime(obj.get("current_period_end"))
+
+    sub = None
+    if org_id:
+        sub = (
+            db.query(OrganizationSubscription)
+            .filter(OrganizationSubscription.org_id == org_id)
+            .first()
+        )
+    if sub is None and customer_id:
+        sub = (
+            db.query(OrganizationSubscription)
+            .filter(OrganizationSubscription.stripe_customer_id == customer_id)
+            .first()
+        )
+        if sub is not None:
+            org_id = sub.org_id
+
+    if not org_id or not customer_id or not status:
+        logger.warning("Org subscription webhook could not be mapped; ignoring")
+        return
+
+    # MED #2 — customer-id collision under a different org.
+    collision = (
+        db.query(OrganizationSubscription)
+        .filter(
+            OrganizationSubscription.stripe_customer_id == customer_id,
+            OrganizationSubscription.org_id != org_id,
+        )
+        .first()
+    )
+    if collision is not None:
+        logger.warning(
+            "Org webhook customer_id already mapped to a different org; refusing"
+        )
+        return
+
+    # MED #1 — out-of-order rejection per row.
+    event_created = _period_end_to_datetime(event_created_unix)
+    if sub is not None and sub.last_event_at is not None and event_created is not None:
+        last = sub.last_event_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if event_created <= last:
+            logger.info("Skipping org subscription event older than last applied for %s", org_id)
+            return
+
+    if sub is None:
+        sub = OrganizationSubscription(
+            org_id=org_id, stripe_customer_id=customer_id, status=status
+        )
+        db.add(sub)
+    sub.stripe_customer_id = customer_id
+    if sub_id:
+        sub.stripe_subscription_id = sub_id
+    sub.status = status
+    sub.current_period_end = period_end
+    sub.plan = "pro"
+    if event_created is not None:
+        sub.last_event_at = event_created
+
+
 def _apply_checkout_completed(db: Session, obj: dict) -> None:
     """Capture the Stripe customer id from a completed Checkout Session so the
     billing portal works even before the first subscription event lands. Does not
     set an active status — that arrives via subscription events; a fresh row is
-    parked as 'incomplete' (is_pro treats it as not Pro)."""
-    user_id = obj.get("client_reference_id") or (obj.get("metadata") or {}).get(
-        "user_id"
-    )
+    parked as 'incomplete' (is_pro treats it as not Pro).
+
+    Phase 8.5 — routes to org_subscriptions when metadata.scope=="org"."""
+    metadata = obj.get("metadata") or {}
+    scope = metadata.get("scope", "user")
     customer_id = obj.get("customer")
     sub_id = obj.get("subscription")
-    if not user_id or not customer_id:
-        logger.warning("checkout.session.completed missing user/customer; ignoring")
+    if not customer_id:
+        logger.warning("checkout.session.completed missing customer; ignoring")
+        return
+
+    if scope == "org":
+        org_id = metadata.get("org_id")
+        if not org_id:
+            logger.warning("checkout.session.completed scope=org missing org_id; ignoring")
+            return
+        sub = (
+            db.query(OrganizationSubscription)
+            .filter(OrganizationSubscription.org_id == org_id)
+            .first()
+        )
+        if sub is None:
+            db.add(
+                OrganizationSubscription(
+                    org_id=org_id,
+                    stripe_customer_id=customer_id,
+                    stripe_subscription_id=sub_id,
+                    status="incomplete",
+                )
+            )
+        else:
+            sub.stripe_customer_id = customer_id
+            if sub_id:
+                sub.stripe_subscription_id = sub_id
+        return
+
+    user_id = obj.get("client_reference_id") or metadata.get("user_id")
+    if not user_id:
+        logger.warning("checkout.session.completed missing user; ignoring")
         return
     sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if sub is None:

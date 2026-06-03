@@ -2050,3 +2050,230 @@ def test_scan_cv_free_user_in_pro_org_bypasses_quota(
         files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
     )
     assert r.status_code == 200
+
+
+# ── Phase 8.5 — webhook routes org-scope events to OrganizationSubscription ──
+
+def _org_sub_event(event_id, event_type, *, org_id, user_id, customer, sub_id, status, days):
+    """An event whose metadata.scope=='org' so the 8.5 router puts it in
+    org_subscriptions instead of subscriptions."""
+    from datetime import datetime, timedelta, timezone
+
+    period = int((datetime.now(timezone.utc) + timedelta(days=days)).timestamp())
+    return {
+        "id": event_id,
+        "type": event_type,
+        "data": {
+            "object": {
+                "id": sub_id,
+                "customer": customer,
+                "status": status,
+                "current_period_end": period,
+                "metadata": {
+                    "user_id": user_id,
+                    "org_id": org_id,
+                    "scope": "org",
+                },
+            }
+        },
+    }
+
+
+def test_webhook_routes_org_subscription_to_org_table(client_with_db, db_session, monkeypatch):
+    """metadata.scope=='org' goes to org_subscriptions; the per-user
+    subscriptions table stays untouched."""
+    from billing import is_org_pro, is_pro
+    from db_models import OrganizationSubscription, Subscription
+
+    event = _org_sub_event(
+        "evt_org_created",
+        "customer.subscription.created",
+        org_id="org_paying_via_webhook",
+        user_id="user_admin",
+        customer="cus_org_1",
+        sub_id="sub_org_1",
+        status="active",
+        days=30,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+
+    db_session.expire_all()
+    org_sub = (
+        db_session.query(OrganizationSubscription)
+        .filter_by(org_id="org_paying_via_webhook")
+        .first()
+    )
+    assert org_sub is not None
+    assert org_sub.status == "active"
+    assert org_sub.stripe_customer_id == "cus_org_1"
+    assert is_org_pro("org_paying_via_webhook", db_session) is True
+    # User-scope table must not have been written.
+    assert (
+        db_session.query(Subscription).filter_by(user_id="user_admin").first()
+        is None
+    )
+    # The admin who ran Checkout is NOT per-user Pro just because they
+    # triggered the purchase.
+    assert is_pro("user_admin", db_session) is False
+
+
+def test_webhook_org_scope_canceled_clears_pro(client_with_db, db_session, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from billing import is_org_pro
+    from db_models import OrganizationSubscription
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id="org_paying",
+            stripe_customer_id="cus_org",
+            stripe_subscription_id="sub_org",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=10),
+        )
+    )
+    db_session.commit()
+    assert is_org_pro("org_paying", db_session) is True
+
+    event = _org_sub_event(
+        "evt_org_del",
+        "customer.subscription.deleted",
+        org_id="org_paying",
+        user_id="user_admin",
+        customer="cus_org",
+        sub_id="sub_org",
+        status="canceled",
+        days=-1,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    assert is_org_pro("org_paying", db_session) is False
+
+
+def test_webhook_org_checkout_completed_records_customer(client_with_db, db_session, monkeypatch):
+    """A checkout.session.completed with scope=org parks an incomplete row in
+    org_subscriptions with the customer id so the org Portal works before the
+    first subscription event lands."""
+    from db_models import OrganizationSubscription
+
+    event = {
+        "id": "evt_cko_org",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "customer": "cus_org_checkout",
+                "subscription": "sub_org_checkout",
+                "metadata": {
+                    "user_id": "user_admin",
+                    "org_id": "org_in_checkout",
+                    "scope": "org",
+                },
+            }
+        },
+    }
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    row = (
+        db_session.query(OrganizationSubscription)
+        .filter_by(org_id="org_in_checkout")
+        .first()
+    )
+    assert row is not None
+    assert row.stripe_customer_id == "cus_org_checkout"
+    assert row.status == "incomplete"
+
+
+def test_webhook_org_scope_missing_org_id_is_ignored(client_with_db, db_session, monkeypatch):
+    """Malformed org event (scope=org but no org_id) is logged + 2xx, never crashes."""
+    from db_models import OrganizationSubscription
+
+    event = {
+        "id": "evt_org_bad",
+        "type": "customer.subscription.created",
+        "data": {
+            "object": {
+                "id": "sub_x",
+                "customer": "cus_x",
+                "status": "active",
+                "current_period_end": 9999999999,
+                "metadata": {"user_id": "user_admin", "scope": "org"},  # no org_id
+            }
+        },
+    }
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    assert db_session.query(OrganizationSubscription).count() == 0
+
+
+def test_webhook_pre_8_4_user_event_without_scope_still_routes_to_subscriptions(
+    client_with_db, db_session, monkeypatch
+):
+    """Backwards-compat: existing subs in production may have metadata without
+    a `scope` field. Missing scope defaults to 'user' (NOT 'org')."""
+    from billing import is_pro
+    from db_models import OrganizationSubscription, Subscription
+
+    event = _sub_event(  # no scope key in the helper's payload
+        "evt_legacy",
+        "customer.subscription.created",
+        user_id="user_legacy",
+        customer="cus_legacy",
+        sub_id="sub_legacy",
+        status="active",
+        days=30,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    assert (
+        db_session.query(Subscription).filter_by(user_id="user_legacy").first()
+        is not None
+    )
+    assert is_pro("user_legacy", db_session) is True
+    assert db_session.query(OrganizationSubscription).count() == 0
+
+
+def test_webhook_org_customer_collision_refused(client_with_db, db_session, monkeypatch):
+    """MED-#2 carried over to the org table: a customer_id that already belongs
+    to a DIFFERENT org cannot be linked to ours."""
+    from db_models import OrganizationSubscription
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id="org_owner",
+            stripe_customer_id="cus_shared",
+            plan="pro",
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    event = _org_sub_event(
+        "evt_collide",
+        "customer.subscription.updated",
+        org_id="org_intruder",
+        user_id="user_admin",
+        customer="cus_shared",
+        sub_id="sub_x",
+        status="active",
+        days=30,
+    )
+    r = _post_webhook(client_with_db, event, monkeypatch=monkeypatch)
+    assert r.status_code == 200
+    db_session.expire_all()
+    assert (
+        db_session.query(OrganizationSubscription)
+        .filter_by(org_id="org_intruder")
+        .first()
+        is None
+    )
+    owner = (
+        db_session.query(OrganizationSubscription)
+        .filter_by(org_id="org_owner")
+        .first()
+    )
+    assert owner.stripe_customer_id == "cus_shared"
