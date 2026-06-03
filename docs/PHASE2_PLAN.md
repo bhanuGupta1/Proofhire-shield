@@ -144,10 +144,46 @@ After Phase 7.7, `/assessment` requires Clerk auth — the Phase-7 spec table
 ("Anonymous: no Assessment") is now actually enforced, so the public demo URL
 shows Risk/Match/Proof only; Assessment is the upgrade carrot.
 
-### Phase 8 — Production hardening + observability + Recruiter co-pilot
-Promoted from "original Phase 7 + original Phase 8" — once Phase 7 is producing
-revenue, observability and the co-pilot follow. Specifics deferred until
-Phase 7 close.
+### Phase 8 — Hardening + observability + org-Pro (re-scoped at 7.7 close)
+Bhanu's Phase-8 picks (2026-06-02): A + B + thin-C — close the explicit
+Phase-7 deferrals (TOCTOU quota race, rate limiting), ship org-level Pro,
+add the smallest useful observability slice (request ids + structured log
+keys). Recruiter co-pilot deferred to Phase 9. Five answers settled:
+1. Width: A+B+thin-C (8.1–8.8).
+2. Org-Pro price: flat $29/mo, reuse `STRIPE_PRICE_ID` (no second price).
+3. Org-Pro grant: every member of the org is Pro while the sub is active.
+4. Rate-limit defaults: 30 anon / 100 auth / 300 Pro per minute.
+5. Member-leaves-org: documented stale-cache gap, Phase 9 fix via Clerk
+   membership webhook.
+
+Closed 2026-06-03 (8.1–8.8):
+- 8.1 (`24681dd`) `monthly_usage` atomic counter (migration 0007) +
+  `consume_or_refuse` + `quota_used_this_month`. Closes P7 round-2 MED.
+- 8.2 (`b75292f`) `backend/rate_limit.py` token-bucket limiter + middleware-
+  level integration on /scan-cv, /assessment, /billing/webhook.
+- 8.3 (`455f2de`) `OrganizationSubscription` (migration 0008) + `is_org_pro` +
+  `is_pro_for`. Backend gates switched to the effective check.
+- 8.4 (`af7f0ec`) `/billing/checkout-session?scope=org` + `/billing/portal?
+  scope=org`. Clerk admin gate. Reuses existing org customer_id.
+- 8.5 (`e0643ed`) Webhook routes by `metadata.scope` — org events land in
+  `org_subscriptions` with the Phase-7.7 hardening carried over per-table
+  (out-of-order rejection, customer-id collision refusal).
+- 8.6 (`87f5a74`) `request_id` middleware + ContextVar + log filter.
+  Outermost middleware, X-Request-Id echoed on every response.
+- 8.7 (`fbca6ec`) Frontend `via_org` flag in QuotaMeter; admin-only
+  "Upgrade firm to Pro" CTA in PricingModal; non-admins see "ask your
+  admin".
+- 8.8 End-of-phase Codex P8 returned **HIGH=0 MED=0 LOW=0** on the first
+  pass (51,821 tokens). No fix commits needed.
+
+Carried into Phase 9:
+- Recruiter co-pilot (conversational interface over the candidate's scan
+  + assessment, saved query history, optional Slack delivery).
+- Clerk membership webhook to invalidate per-user Pro derived from an
+  org when a member leaves (the documented 8.3 stale-cache gap).
+- External observability backend (Logfire / Honeycomb free tier) +
+  per-firm spend dashboard — the current request_id work is the
+  prerequisite, the dashboard is the next chapter.
 
 ## Architecture decisions (provisional)
 
@@ -246,8 +282,15 @@ Phase 7 close.
   quota TOCTOU) deferred to Phase 8 with rationale (see "Deferred" block under
   Phase 7 above). **320 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc
   clean; vite build clean.** Tier rules + Bhanu's answers recorded below.
-- Phase 8: pending Phase 7 close. Promoted to the original Phase 7 + 8 contents
-  (hardening + observability + recruiter co-pilot).
+- Phase 8: **COMPLETE + REVIEWED** (2026-06-03) — A + B + thin-C: closes the
+  Phase-7 deferrals (counter table + rate limiter), ships org-level Pro
+  (model + helpers + admin Checkout + webhook routing + frontend), and adds
+  the request-id observability layer. 8.1–8.8 shipped (commits 24681dd,
+  b75292f, 455f2de, af7f0ec, e0643ed, 87f5a74, fbca6ec). End-of-phase Codex
+  P8 returned **HIGH=0 MED=0 LOW=0** on the first pass — no fix commits.
+  **385 tests; bandit 0 HIGH/MED (1 pre-existing LOW); tsc clean; vite build
+  clean.** Phase 9 carries the recruiter co-pilot, Clerk-membership webhook
+  for org-Pro revocation, and external observability backend.
 
 ### Phase 7 answers from Bhanu (2026-06-01)
 1. **Pro scope** — per-user for v1. Org-level Pro deferred (a candidate Phase 7.5
