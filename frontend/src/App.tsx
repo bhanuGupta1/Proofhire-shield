@@ -17,6 +17,11 @@ import { AssessmentTab } from './components/tabs/AssessmentTab'
 import { JDMatcher } from './components/JDMatcher'
 import { QuotaMeter } from './components/QuotaMeter'
 import { PricingModal } from './components/PricingModal'
+import {
+  OnboardingTour,
+  TourLauncherButton,
+  useOnboardingTour,
+} from './components/OnboardingTour'
 import { scanCV, getScan, getBillingStatus, startCheckout, openBillingPortal } from './lib/api'
 import type { ScanResult, BillingStatus } from './lib/types'
 
@@ -51,6 +56,7 @@ function AppContent() {
   const [pricingOpen, setPricingOpen] = useState(false)
   const [checkoutBusy, setCheckoutBusy] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const tour = useOnboardingTour()
 
   async function refreshBilling() {
     if (!isSignedIn) {
@@ -314,6 +320,7 @@ function AppContent() {
 
             {/* Upload CTA */}
             <div
+              data-tour="upload"
               className="animate-fade-in-up"
               style={{ animationDelay: '480ms' }}
             >
@@ -386,6 +393,7 @@ function AppContent() {
               {TABS.map((t) => (
                 <button
                   key={t.id}
+                  data-tour={t.id === 'risk' || t.id === 'match' ? t.id : undefined}
                   onClick={() => setActiveTab(t.id)}
                   className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all
                     ${activeTab === t.id
@@ -408,7 +416,7 @@ function AppContent() {
               />
             )}
 
-            <div className="mt-8">
+            <div className="mt-8" data-tour="jd">
               <JDMatcher cvText={result.safe_copy_text} />
             </div>
           </div>
@@ -448,6 +456,12 @@ function AppContent() {
           </div>
         </div>
       </footer>
+
+      {/* Phase 9 Feature 2 — first-visit walkthrough.
+          The launcher button stays mounted so a returning user can replay
+          the tour any time; the modal itself is conditionally rendered. */}
+      <TourLauncherButton onClick={tour.show} />
+      <OnboardingTour open={tour.open} onClose={tour.close} />
     </div>
   )
 }
