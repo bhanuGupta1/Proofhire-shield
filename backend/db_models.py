@@ -133,6 +133,39 @@ class Subscription(Base):
     )
 
 
+class OrganizationSubscription(Base):
+    """Phase 8.3 — one row per Clerk organization with a Stripe subscription.
+
+    Mirrors `Subscription` but keyed on Clerk `org_id`. Org-level Pro grants
+    Pro features to EVERY member of the org while the sub is active (per
+    Bhanu's Phase-8 answer #3). Membership changes are out of scope for
+    Phase 8 — Codex P7 round-2 MED noted, Phase 9 will add a Clerk
+    membership webhook. The active org is the one whose id Clerk stamps on
+    the verified JWT as `org_id`.
+
+    Webhooks route subscription events into the right table by the
+    `metadata.scope` field stamped at Checkout: `scope=org` lands here,
+    everything else lands in the per-user `Subscription` table (Phase 8.5).
+    """
+
+    __tablename__ = "org_subscriptions"
+
+    # Clerk org_id, same shape as Scan.org_id (String(64)).
+    org_id = Column(String(64), primary_key=True)
+    # Stripe `cus_...`. Indexed for the customer-id fallback webhook lookup.
+    stripe_customer_id = Column(String(64), nullable=False, index=True)
+    stripe_subscription_id = Column(String(64), nullable=True)
+    plan = Column(String(16), nullable=False, default="pro")
+    status = Column(String(24), nullable=False)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    # Same out-of-order rejection mechanism as personal Subscription (Phase 7.7).
+    last_event_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
 class MonthlyUsage(Base):
     """Atomic per-user monthly scan-quota counter (Phase 8.1).
 

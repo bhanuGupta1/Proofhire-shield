@@ -130,10 +130,17 @@ class BillingRedirectResponse(BaseModel):
 
 class BillingStatusResponse(BaseModel):
     """Drives the frontend quota meter + Pro gating. current_period_end and status
-    are echoed from the user's Subscription row (null when they have none)."""
+    are echoed from the user's Subscription row (null when they have none).
+
+    Phase 8.3 — `via_org` is True iff the caller's effective Pro comes from an
+    OrganizationSubscription on the active Clerk org, not from a personal sub.
+    The frontend uses this to swap the "Manage billing" CTA for "Org billing
+    managed by admin" when the user is a non-admin org member benefiting from
+    a firm subscription."""
     plan: Literal["free", "pro"]
     is_pro: bool
     scans_used: int = Field(ge=0)
     scan_limit: int = Field(ge=0)
     current_period_end: str | None = None  # ISO 8601 — when the Pro period renews/ends
     status: str | None = None  # raw Stripe subscription status, for display
+    via_org: bool = False  # Phase 8.3 — Pro inherited from the active org's subscription

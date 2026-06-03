@@ -19,7 +19,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from db_models import MonthlyUsage, Scan, Subscription
+from db_models import MonthlyUsage, OrganizationSubscription, Scan, Subscription
 
 
 FREE_SCAN_LIMIT = 10
@@ -54,6 +54,37 @@ def is_pro(user_id: str, db: Session) -> bool:
         .first()
         is not None
     )
+
+
+def is_org_pro(org_id: str, db: Session) -> bool:
+    """True iff the org has an active Stripe sub on `org_subscriptions`.
+
+    Phase 8.3 — same status / period rules as `is_pro` but keyed on org_id."""
+    now = datetime.now(timezone.utc)
+    return (
+        db.query(OrganizationSubscription)
+        .filter(OrganizationSubscription.org_id == org_id)
+        .filter(OrganizationSubscription.status.in_(PRO_STATUSES))
+        .filter(OrganizationSubscription.current_period_end != None)  # noqa: E711
+        .filter(OrganizationSubscription.current_period_end > now)
+        .first()
+        is not None
+    )
+
+
+def is_pro_for(user_id: str, org_id: str | None, db: Session) -> bool:
+    """Effective Pro for the caller — personal sub OR (in an org) the org sub.
+
+    Phase 8.3 view-everything policy: when a Clerk org has an active
+    subscription, every member is treated as Pro while that sub is active.
+    The personal sub still takes precedence in /billing/status display via
+    the `via_org` flag.
+    """
+    if is_pro(user_id, db):
+        return True
+    if org_id and is_org_pro(org_id, db):
+        return True
+    return False
 
 
 def scans_used_this_month(user_id: str, db: Session) -> int:

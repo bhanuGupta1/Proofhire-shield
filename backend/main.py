@@ -45,7 +45,9 @@ from auth import get_current_user, get_current_user_optional, get_current_org_op
 from billing import (
     FREE_SCAN_LIMIT,
     consume_or_refuse,
+    is_org_pro,
     is_pro,
+    is_pro_for,
     quota_used_this_month,
 )
 from rate_limit import (
@@ -189,14 +191,19 @@ async def scan_cv(
     # their monthly bucket on rejected requests.
     _enforce_rate("/scan-cv", request, current_user, db)
 
-    # Phase 7.2 + 8.1 — free-tier quota gate, atomic via consume_or_refuse.
+    # Phase 7.2 + 8.1 + 8.3 — free-tier quota gate, atomic via consume_or_refuse.
     # Anonymous (no current_user) is unmetered so the demo path keeps working;
     # DB-unconfigured deployments degrade open (Phase 4/5 backward-compat
-    # invariant). Pro bypasses unconditionally. Checked first so a free user
-    # at the cap never pays the file-read cost. consume_or_refuse RESERVES the
-    # slot before the scan runs — a failed scan still counts (conservative),
-    # which avoids a refund race and matches "reservation, not optimistic".
-    if current_user is not None and db is not None and not is_pro(current_user, db):
+    # invariant). EFFECTIVE Pro (personal OR org-Pro for the active org)
+    # bypasses unconditionally. Checked first so a free user at the cap never
+    # pays the file-read cost. consume_or_refuse RESERVES the slot before the
+    # scan runs — a failed scan still counts (conservative), which avoids a
+    # refund race and matches "reservation, not optimistic".
+    if (
+        current_user is not None
+        and db is not None
+        and not is_pro_for(current_user, current_org, db)
+    ):
         if not consume_or_refuse(current_user, db):
             raise HTTPException(
                 status_code=402,
@@ -487,11 +494,12 @@ def assessment_endpoint(
     # before we pay any LLM cost on the upstream.
     _enforce_rate("/assessment", request, current_user, db)
 
-    # Phase 7.3 + 7.7 — Pro gate. Auth is now required (the dep raises 401/503
-    # for anonymous callers before we get here), so the only remaining check is
-    # the subscription state. DB-unconfigured deployments degrade open so
-    # dev/staging without persistence still works.
-    if db is not None and not is_pro(current_user, db):
+    # Phase 7.3 + 7.7 + 8.3 — Pro gate. Auth is required (the dep raises
+    # 401/503 for anonymous callers before we get here); the effective check
+    # is personal Pro OR org-Pro for the caller's active Clerk org.
+    # DB-unconfigured deployments degrade open so dev/staging without
+    # persistence still works.
+    if db is not None and not is_pro_for(current_user, current_org, db):
         raise HTTPException(
             status_code=402,
             detail="Assessment generation requires a Pro subscription.",
@@ -654,14 +662,22 @@ def billing_portal(
 def billing_status(
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
 ) -> BillingStatusResponse:
     """Report the caller's plan, Pro flag, and this-month scan usage. Auth + DB
     required. Drives the frontend quota meter and Pro gating. No Stripe call —
     everything is read from our own rows, so it stays fast and works even if
-    Stripe is unreachable."""
+    Stripe is unreachable.
+
+    Phase 8.3 — `via_org` is True when the caller's effective Pro comes from
+    the org's subscription, not from a personal sub. The personal `status`
+    and `current_period_end` still come from the user's own row; the org's
+    period and status are managed by the admin and shown in their UI."""
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
-    pro = is_pro(current_user, db)
+    personal_pro = is_pro(current_user, db)
+    org_pro = bool(current_org) and is_org_pro(current_org, db)
+    pro = personal_pro or org_pro
     # Phase 8.1: read the gate-authoritative counter so the UI shows what
     # /scan-cv will actually enforce. Pre-8.1 free users with Scan rows but
     # no MonthlyUsage row see 0 until their next scan (deploy-day reset).
@@ -679,6 +695,7 @@ def billing_status(
         scan_limit=FREE_SCAN_LIMIT,
         current_period_end=period_end,
         status=sub.status if sub is not None else None,
+        via_org=org_pro and not personal_pro,
     )
 
 

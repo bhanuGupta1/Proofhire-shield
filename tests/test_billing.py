@@ -561,3 +561,121 @@ def test_consume_or_refuse_scopes_to_user(db_session):
 
     assert consume_or_refuse("user_capped", db_session) is False
     assert consume_or_refuse("user_clean", db_session) is True
+
+
+# ── Phase 8.3 — OrganizationSubscription + is_pro_for ────────────────────────
+
+from billing import is_org_pro, is_pro_for
+
+
+def test_org_subscriptions_table_present_on_engine(db_session):
+    insp = inspect(db_session.get_bind())
+    assert "org_subscriptions" in insp.get_table_names()
+
+
+def test_org_subscriptions_has_org_id_primary_key(db_session):
+    """Per-org Pro: at most one sub per org."""
+    insp = inspect(db_session.get_bind())
+    pk = insp.get_pk_constraint("org_subscriptions")
+    assert pk["constrained_columns"] == ["org_id"]
+
+
+def _put_org_sub(db_session, *, org_id, status, period_end):
+    from db_models import OrganizationSubscription
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id=org_id,
+            stripe_customer_id=f"cus_org_{org_id}",
+            stripe_subscription_id=f"sub_org_{org_id}",
+            plan="pro",
+            status=status,
+            current_period_end=period_end,
+        )
+    )
+    db_session.commit()
+
+
+def test_is_org_pro_false_when_no_row(db_session):
+    assert is_org_pro("org_none", db_session) is False
+
+
+def test_is_org_pro_true_when_active_and_future(db_session):
+    _put_org_sub(
+        db_session,
+        org_id="org_paying",
+        status="active",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_org_pro("org_paying", db_session) is True
+
+
+def test_is_org_pro_false_when_status_canceled(db_session):
+    _put_org_sub(
+        db_session,
+        org_id="org_canceled",
+        status="canceled",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_org_pro("org_canceled", db_session) is False
+
+
+def test_is_org_pro_false_when_expired(db_session):
+    _put_org_sub(
+        db_session,
+        org_id="org_expired",
+        status="active",
+        period_end=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    assert is_org_pro("org_expired", db_session) is False
+
+
+def test_is_pro_for_true_when_user_has_personal_pro(db_session):
+    """View-everything: a personal Pro is sufficient regardless of org context."""
+    _put_sub(
+        db_session,
+        user_id="user_personal_pro",
+        status="active",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_pro_for("user_personal_pro", None, db_session) is True
+    assert is_pro_for("user_personal_pro", "org_a", db_session) is True
+
+
+def test_is_pro_for_true_when_org_has_pro_and_user_does_not(db_session):
+    """Free user in a Pro org → effective Pro (Bhanu's Phase-8 answer #3)."""
+    _put_org_sub(
+        db_session,
+        org_id="org_paying",
+        status="active",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_pro_for("user_free", "org_paying", db_session) is True
+
+
+def test_is_pro_for_false_when_neither_user_nor_org_has_pro(db_session):
+    assert is_pro_for("user_free", "org_free", db_session) is False
+
+
+def test_is_pro_for_false_when_org_id_is_none_and_user_free(db_session):
+    """No org context AND no personal sub → not Pro. An org sub for some
+    OTHER org the caller isn't currently in must not leak in."""
+    _put_org_sub(
+        db_session,
+        org_id="org_other",
+        status="active",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_pro_for("user_free", None, db_session) is False
+
+
+def test_is_pro_for_scopes_to_caller_org(db_session):
+    """Caller in org_A must not get Pro from org_B's sub."""
+    _put_org_sub(
+        db_session,
+        org_id="org_b",
+        status="active",
+        period_end=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    assert is_pro_for("user_a", "org_a", db_session) is False
+    assert is_pro_for("user_b", "org_b", db_session) is True
