@@ -299,16 +299,38 @@ function AppContent() {
         )}
 
         {result && (
-          <div>
-            <div className="mb-6 flex gap-1 border-b border-gray-200">
+          <div className="animate-fade-in-up">
+            {/* Result-summary strip: filename + risk badge at the top so the
+                user always sees what they're looking at. */}
+            <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-gray-50 to-gray-100 ring-1 ring-gray-100">
+                  <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0119 9.414V19a2 2 0 01-2 2z"/></svg>
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-900">{result.filename}</p>
+                  <p className="text-xs text-gray-500">Scan complete · {result.risk_score}/100 risk score</p>
+                </div>
+              </div>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold tracking-wider
+                ${result.risk_level === 'GREEN' ? 'bg-green-100 text-green-700' : ''}
+                ${result.risk_level === 'ORANGE' ? 'bg-amber-100 text-amber-700' : ''}
+                ${result.risk_level === 'RED' ? 'bg-red-100 text-red-700' : ''}`}
+              >
+                {result.risk_level}
+              </span>
+            </div>
+
+            {/* Segmented pill tabs: cleaner affordance than an underline. */}
+            <div className="mb-5 inline-flex gap-1 rounded-xl border border-gray-200 bg-white/80 p-1 shadow-sm backdrop-blur-sm">
               {TABS.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id)}
-                  className={`px-4 py-2 text-sm font-medium transition-colors
+                  className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all
                     ${activeTab === t.id
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'}`}
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
                 >
                   {t.label}
                 </button>
