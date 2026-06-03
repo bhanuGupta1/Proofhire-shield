@@ -116,20 +116,40 @@ def _session_url(session: Any) -> str:
     return url
 
 
-def create_checkout_session(*, user_id: str, customer_id: str | None = None) -> str:
-    """Create a subscription Checkout Session for `user_id` and return its hosted URL.
+def create_checkout_session(
+    *,
+    user_id: str,
+    customer_id: str | None = None,
+    scope: str = "user",
+    org_id: str | None = None,
+) -> str:
+    """Create a subscription Checkout Session and return its hosted URL.
 
     `user_id` (the verified Clerk sub) is stamped onto both the session
     (client_reference_id + metadata) and the resulting subscription
-    (subscription_data.metadata) so the 7.5 webhook can map the event back to our
-    user even if the customer object is created fresh by Stripe. When we already
-    know the user's Stripe customer id we reuse it so a re-subscribe does not
-    create a duplicate customer.
+    (subscription_data.metadata) so the webhook can map the event back to our
+    user even if the customer object is created fresh by Stripe. When we
+    already know the customer id we reuse it so a re-subscribe does not
+    create a duplicate Stripe customer.
+
+    Phase 8.4 — `scope` selects per-user vs per-org Checkout. When
+    `scope="org"`, `org_id` must be set; the metadata also carries
+    `scope=org` and `org_id` so the 8.5 webhook routes the resulting
+    subscription into `org_subscriptions` rather than `subscriptions`.
+    For org Checkout `user_id` is still recorded — it identifies which
+    admin triggered the purchase for audit, not who pays.
     """
+    if scope not in ("user", "org"):
+        raise BillingError("Unknown checkout scope.")
+    if scope == "org" and not org_id:
+        raise BillingError("Org checkout requires an org id.")
     price = _price_id()
     if not price:
         logger.warning("STRIPE_PRICE_ID is not configured")
         raise BillingError("Billing is not configured.")
+    metadata: dict[str, str] = {"user_id": user_id, "scope": scope}
+    if scope == "org":
+        metadata["org_id"] = org_id  # type: ignore[assignment]
     stripe = _load_stripe()
     params: dict[str, Any] = {
         "mode": "subscription",
@@ -137,8 +157,8 @@ def create_checkout_session(*, user_id: str, customer_id: str | None = None) -> 
         "success_url": _success_url(),
         "cancel_url": _cancel_url(),
         "client_reference_id": user_id,
-        "metadata": {"user_id": user_id},
-        "subscription_data": {"metadata": {"user_id": user_id}},
+        "metadata": dict(metadata),
+        "subscription_data": {"metadata": dict(metadata)},
     }
     if customer_id:
         params["customer"] = customer_id

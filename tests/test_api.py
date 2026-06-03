@@ -1829,3 +1829,224 @@ def test_webhook_duplicate_event_race_returns_2xx(client_with_db, db_session, mo
     )
     assert r.status_code == 200
     assert r.json().get("duplicate") is True
+
+
+# ── Phase 8.4 — org-admin Checkout + Portal ──────────────────────────────────
+
+def _stub_stripe_for_billing(monkeypatch, *, url="https://checkout.test/x"):
+    """Stub the Stripe layer so /billing endpoints return without hitting the
+    network. Returns the captured kwargs dict so callers can assert metadata."""
+    import main as main_module
+    import stripe_billing
+
+    monkeypatch.setattr(stripe_billing, "is_billing_configured", lambda: True)
+    monkeypatch.setattr(main_module, "is_billing_configured", lambda: True)
+    captured = {}
+
+    def fake_checkout(**kwargs):
+        captured.update(kwargs)
+        return url
+
+    monkeypatch.setattr(main_module, "create_checkout_session", fake_checkout)
+    monkeypatch.setattr(main_module, "create_portal_session", lambda **kw: url)
+    return captured
+
+
+def test_billing_checkout_org_scope_admin_succeeds(
+    client_with_db_auth_org_admin, monkeypatch
+):
+    """Admin in an active org can start an org-scope Checkout, metadata routed."""
+    from conftest import TEST_USER_ID, TEST_ORG_ID
+
+    captured = _stub_stripe_for_billing(monkeypatch)
+
+    r = client_with_db_auth_org_admin.post("/billing/checkout-session?scope=org")
+    assert r.status_code == 200, r.text
+    assert r.json()["url"].startswith("https://")
+    assert captured["scope"] == "org"
+    assert captured["org_id"] == TEST_ORG_ID
+    # The admin's user_id is still recorded for audit (not the org's customer).
+    assert captured["user_id"] == TEST_USER_ID
+
+
+def test_billing_checkout_org_scope_viewer_403(
+    client_with_db_auth_org_viewer, monkeypatch
+):
+    """Non-admin org member cannot start an org subscription."""
+    _stub_stripe_for_billing(monkeypatch)
+    r = client_with_db_auth_org_viewer.post("/billing/checkout-session?scope=org")
+    assert r.status_code == 403
+    assert "admin" in r.json()["detail"].lower()
+
+
+def test_billing_checkout_org_scope_without_org_context_400(
+    client_with_db_and_auth, monkeypatch
+):
+    """Caller not currently inside an org → 400 (not 403; we don't have a role
+    to check)."""
+    _stub_stripe_for_billing(monkeypatch)
+    r = client_with_db_and_auth.post("/billing/checkout-session?scope=org")
+    assert r.status_code == 400
+
+
+def test_billing_checkout_org_already_pro_returns_409(
+    client_with_db_auth_org_admin, db_session, monkeypatch
+):
+    """The org already has an active sub — refuse 409 so we never start a
+    second subscription on the same org's customer."""
+    from datetime import datetime, timedelta, timezone
+    from conftest import TEST_ORG_ID
+    from db_models import OrganizationSubscription
+
+    _stub_stripe_for_billing(monkeypatch)
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org_existing",
+            stripe_subscription_id="sub_org_existing",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=10),
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_auth_org_admin.post("/billing/checkout-session?scope=org")
+    assert r.status_code == 409
+
+
+def test_billing_checkout_org_reuses_existing_customer_id(
+    client_with_db_auth_org_admin, db_session, monkeypatch
+):
+    """An OrganizationSubscription row already carries a customer id (e.g. from
+    a prior incomplete checkout); reuse it rather than creating a duplicate."""
+    from conftest import TEST_ORG_ID
+    from db_models import OrganizationSubscription
+
+    captured = _stub_stripe_for_billing(monkeypatch)
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org_reuse_me",
+            plan="pro",
+            status="incomplete",
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_auth_org_admin.post("/billing/checkout-session?scope=org")
+    assert r.status_code == 200
+    assert captured["customer_id"] == "cus_org_reuse_me"
+
+
+def test_billing_checkout_user_scope_unaffected(
+    client_with_db_and_auth, monkeypatch
+):
+    """The default scope=user path still works for non-org callers."""
+    captured = _stub_stripe_for_billing(monkeypatch)
+    r = client_with_db_and_auth.post("/billing/checkout-session")
+    assert r.status_code == 200
+    assert captured["scope"] == "user"
+    assert captured.get("org_id") is None
+
+
+def test_billing_portal_org_admin_succeeds(
+    client_with_db_auth_org_admin, db_session, monkeypatch
+):
+    from conftest import TEST_ORG_ID
+    from db_models import OrganizationSubscription
+
+    _stub_stripe_for_billing(monkeypatch, url="https://portal.test/o")
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org_portal",
+            plan="pro",
+            status="active",
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_auth_org_admin.post("/billing/portal?scope=org")
+    assert r.status_code == 200
+    assert r.json()["url"] == "https://portal.test/o"
+
+
+def test_billing_portal_org_viewer_403(
+    client_with_db_auth_org_viewer, monkeypatch
+):
+    _stub_stripe_for_billing(monkeypatch)
+    r = client_with_db_auth_org_viewer.post("/billing/portal?scope=org")
+    assert r.status_code == 403
+
+
+def test_billing_status_via_org_flag_true_when_org_pro_only(
+    client_with_db_auth_and_org, db_session
+):
+    """Free user in a Pro org: status reports plan=pro, is_pro=true, via_org=true."""
+    from datetime import datetime, timedelta, timezone
+    from conftest import TEST_ORG_ID
+    from db_models import OrganizationSubscription
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=10),
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_auth_and_org.get("/billing/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan"] == "pro"
+    assert body["is_pro"] is True
+    assert body["via_org"] is True
+
+
+def test_billing_status_via_org_false_when_personal_pro(
+    client_with_db_and_auth, db_session
+):
+    """Personal Pro takes precedence: via_org=false even if there's a Pro org."""
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    r = client_with_db_and_auth.get("/billing/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan"] == "pro"
+    assert body["is_pro"] is True
+    assert body["via_org"] is False
+
+
+def test_scan_cv_free_user_in_pro_org_bypasses_quota(
+    client_with_db_auth_and_org, db_session
+):
+    """Phase 8.3 view-everything: free user inside a Pro org gets unlimited
+    scans (gate sees is_pro_for=True via org)."""
+    from datetime import datetime, timedelta, timezone
+    from conftest import TEST_USER_ID, TEST_ORG_ID
+    from billing import FREE_SCAN_LIMIT
+    from db_models import OrganizationSubscription
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=10),
+        )
+    )
+    _seed_persisted_scans(
+        db_session, user_id=TEST_USER_ID, count=FREE_SCAN_LIMIT
+    )
+    # Without org Pro this would be 402; with it the 11th still succeeds.
+    r = client_with_db_auth_and_org.post(
+        "/scan-cv",
+        files={"file": ("01_clean.pdf", (DEMO_DIR / "01_clean.pdf").read_bytes(), "application/pdf")},
+    )
+    assert r.status_code == 200

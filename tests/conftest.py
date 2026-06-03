@@ -117,6 +117,56 @@ def client_with_db_auth_and_org(client_with_db):
 
 
 @pytest.fixture
+def client_with_db_auth_org_admin(client_with_db):
+    """TestClient with DB + authed user + active org + Clerk org_role=admin.
+    Phase 8.4 fixture for the org-Checkout / org-Portal endpoints."""
+    from auth import (
+        get_current_org_optional,
+        get_current_org_role_optional,
+        get_current_user,
+        get_current_user_optional,
+    )
+    from main import app
+
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_org_optional] = lambda: TEST_ORG_ID
+    app.dependency_overrides[get_current_org_role_optional] = lambda: "admin"
+    try:
+        yield client_with_db
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)
+        app.dependency_overrides.pop(get_current_org_optional, None)
+        app.dependency_overrides.pop(get_current_org_role_optional, None)
+
+
+@pytest.fixture
+def client_with_db_auth_org_viewer(client_with_db):
+    """Same as client_with_db_auth_org_admin but org_role=viewer — used to
+    verify the admin-only endpoints 403 a non-admin member."""
+    from auth import (
+        get_current_org_optional,
+        get_current_org_role_optional,
+        get_current_user,
+        get_current_user_optional,
+    )
+    from main import app
+
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
+    app.dependency_overrides[get_current_org_optional] = lambda: TEST_ORG_ID
+    app.dependency_overrides[get_current_org_role_optional] = lambda: "viewer"
+    try:
+        yield client_with_db
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_current_user_optional, None)
+        app.dependency_overrides.pop(get_current_org_optional, None)
+        app.dependency_overrides.pop(get_current_org_role_optional, None)
+
+
+@pytest.fixture
 def client_with_auth_only():
     """TestClient with the auth user stubbed but NO database — used to verify
     503 behaviour on endpoints that need a DB to honour the request."""

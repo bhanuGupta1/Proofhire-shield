@@ -279,8 +279,12 @@ def test_create_checkout_session_builds_subscription_session(monkeypatch):
     assert captured["mode"] == "subscription"
     assert captured["line_items"] == [{"price": "price_dummy", "quantity": 1}]
     assert captured["client_reference_id"] == "user_x"
-    assert captured["metadata"] == {"user_id": "user_x"}
-    assert captured["subscription_data"] == {"metadata": {"user_id": "user_x"}}
+    # Phase 8.4: metadata gained a `scope` field so the webhook can route to
+    # the right table. Default scope is "user".
+    assert captured["metadata"] == {"user_id": "user_x", "scope": "user"}
+    assert captured["subscription_data"] == {
+        "metadata": {"user_id": "user_x", "scope": "user"}
+    }
     # No existing customer id -> Stripe creates one; we must not send a customer key.
     assert "customer" not in captured
     # Redirect URLs are server-derived, never client input.
@@ -679,3 +683,47 @@ def test_is_pro_for_scopes_to_caller_org(db_session):
     )
     assert is_pro_for("user_a", "org_a", db_session) is False
     assert is_pro_for("user_b", "org_b", db_session) is True
+
+
+# ── Phase 8.4 — create_checkout_session with scope=org ────────────────────────
+
+def test_create_checkout_session_org_scope_stamps_metadata(monkeypatch):
+    _set_billing_env(monkeypatch)
+    import stripe
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return type("S", (), {"url": "https://checkout.stripe.test/org"})()
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", staticmethod(fake_create))
+    url = create_checkout_session(
+        user_id="user_admin", scope="org", org_id="org_paying"
+    )
+    assert url == "https://checkout.stripe.test/org"
+    assert captured["metadata"] == {
+        "user_id": "user_admin",
+        "scope": "org",
+        "org_id": "org_paying",
+    }
+    assert captured["subscription_data"]["metadata"] == {
+        "user_id": "user_admin",
+        "scope": "org",
+        "org_id": "org_paying",
+    }
+    # client_reference_id still carries the admin's user_id (audit trail), not
+    # the org id. The org routing lives entirely in metadata.scope.
+    assert captured["client_reference_id"] == "user_admin"
+
+
+def test_create_checkout_session_org_scope_requires_org_id(monkeypatch):
+    _set_billing_env(monkeypatch)
+    with pytest.raises(BillingError, match="org id"):
+        create_checkout_session(user_id="user_admin", scope="org")
+
+
+def test_create_checkout_session_unknown_scope_raises(monkeypatch):
+    _set_billing_env(monkeypatch)
+    with pytest.raises(BillingError, match="scope"):
+        create_checkout_session(user_id="user_x", scope="firm")  # not a valid scope

@@ -40,8 +40,19 @@ from trust_report import build_trust_report
 from text_extract import extract_text, _MAGIC
 from match_analysis import analyze_match
 from db import get_db
-from db_models import Assessment, Scan, Subscription, WebhookEvent
-from auth import get_current_user, get_current_user_optional, get_current_org_optional
+from db_models import (
+    Assessment,
+    OrganizationSubscription,
+    Scan,
+    Subscription,
+    WebhookEvent,
+)
+from auth import (
+    get_current_org_optional,
+    get_current_org_role_optional,
+    get_current_user,
+    get_current_user_optional,
+)
 from billing import (
     FREE_SCAN_LIMIT,
     consume_or_refuse,
@@ -606,18 +617,59 @@ def assessment_endpoint(
 def billing_checkout_session(
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
+    current_org_role: str | None = Depends(get_current_org_role_optional),
+    scope: str = "user",
 ) -> BillingRedirectResponse:
     """Start a Pro subscription. Returns a Stripe Checkout URL for the client to open.
 
     Auth + DB required. Redirect URLs are SERVER-configured (never client-supplied)
-    to avoid an open-redirect. An already-Pro caller gets 409 and is pointed at the
-    billing portal so we never start a second, duplicate subscription. When we
-    already hold the caller's Stripe customer id we reuse it (no duplicate customer).
+    to avoid an open-redirect. When `scope=org` the caller must be acting inside
+    a Clerk organisation context AND have `org_role=admin` — viewers see 403.
+    An already-Pro target (user or org) gets 409 and is pointed at the billing
+    portal so we never start a second, duplicate subscription. Customer ids are
+    reused per scope (user → `subscriptions`, org → `org_subscriptions`).
     """
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
     if not is_billing_configured():
         raise HTTPException(status_code=503, detail="Billing is not configured.")
+    if scope not in ("user", "org"):
+        raise HTTPException(status_code=422, detail="Unknown checkout scope.")
+
+    if scope == "org":
+        if not current_org:
+            raise HTTPException(
+                status_code=400,
+                detail="Org checkout requires an active organisation context.",
+            )
+        if current_org_role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only an org admin can start an org subscription.",
+            )
+        if is_org_pro(current_org, db):
+            raise HTTPException(
+                status_code=409,
+                detail="Org already subscribed to Pro. Use the org billing portal to manage.",
+            )
+        existing = (
+            db.query(OrganizationSubscription)
+            .filter(OrganizationSubscription.org_id == current_org)
+            .first()
+        )
+        customer_id = existing.stripe_customer_id if existing else None
+        try:
+            url = create_checkout_session(
+                user_id=current_user,
+                customer_id=customer_id,
+                scope="org",
+                org_id=current_org,
+            )
+        except BillingError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        return BillingRedirectResponse(url=url)
+
     if is_pro(current_user, db):
         raise HTTPException(
             status_code=409,
@@ -628,7 +680,9 @@ def billing_checkout_session(
     )
     customer_id = existing.stripe_customer_id if existing else None
     try:
-        url = create_checkout_session(user_id=current_user, customer_id=customer_id)
+        url = create_checkout_session(
+            user_id=current_user, customer_id=customer_id, scope="user"
+        )
     except BillingError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return BillingRedirectResponse(url=url)
@@ -638,17 +692,45 @@ def billing_checkout_session(
 def billing_portal(
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
+    current_org_role: str | None = Depends(get_current_org_role_optional),
+    scope: str = "user",
 ) -> BillingRedirectResponse:
     """Open the Stripe Billing Portal so the caller can manage / cancel Pro.
 
-    Auth + DB required. 404 when the caller has no Stripe customer yet (nothing to
-    manage) — a customer id only exists after a completed checkout.
+    Auth + DB required. `scope=org` requires Clerk org context AND org_role=admin
+    (non-admins get 403 — they don't manage the firm's billing). 404 when no
+    Stripe customer exists for the scope yet.
     """
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
     if not is_billing_configured():
         raise HTTPException(status_code=503, detail="Billing is not configured.")
-    sub = db.query(Subscription).filter(Subscription.user_id == current_user).first()
+    if scope not in ("user", "org"):
+        raise HTTPException(status_code=422, detail="Unknown portal scope.")
+
+    if scope == "org":
+        if not current_org:
+            raise HTTPException(
+                status_code=400,
+                detail="Org portal requires an active organisation context.",
+            )
+        if current_org_role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only an org admin can open the org billing portal.",
+            )
+        sub = (
+            db.query(OrganizationSubscription)
+            .filter(OrganizationSubscription.org_id == current_org)
+            .first()
+        )
+    else:
+        sub = (
+            db.query(Subscription)
+            .filter(Subscription.user_id == current_user)
+            .first()
+        )
     if sub is None or not sub.stripe_customer_id:
         raise HTTPException(status_code=404, detail="No billing account found.")
     try:
