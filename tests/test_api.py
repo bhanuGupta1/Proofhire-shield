@@ -1230,6 +1230,208 @@ def test_assessment_free_signed_in_scan_id_path_open(client_with_db_and_auth, db
     assert r.status_code == 200
 
 
+# ── Phase 9 Feature 1 — Free assessment quota (5/month, Pro unlimited) ──────
+
+def _canned_assessment_report():
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+
+    return AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="ok",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="Worth interviewing",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+
+
+def test_assessment_free_under_limit(client_with_db_and_auth, db_session, monkeypatch):
+    """First assessment for a Free signed-in user succeeds and increments
+    the per-user assessment counter to 1."""
+    from billing import FREE_ASSESSMENT_LIMIT, assessments_used_this_month
+    from conftest import TEST_USER_ID
+    import main as main_module
+
+    assert FREE_ASSESSMENT_LIMIT == 5  # spec pin
+    monkeypatch.setattr(
+        main_module, "generate_assessment_report", lambda **kw: _canned_assessment_report()
+    )
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+    )
+    assert r.status_code == 200
+    assert assessments_used_this_month(TEST_USER_ID, db_session) == 1
+
+
+def test_assessment_free_limit_enforced(client_with_db_and_auth, db_session, monkeypatch):
+    """Five Free assessments succeed; the sixth gets 402 with the upgrade
+    message — same pattern as /scan-cv but a separate counter."""
+    from billing import FREE_ASSESSMENT_LIMIT
+    from conftest import TEST_USER_ID
+    from db_models import MonthlyUsage
+    import main as main_module
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(
+        main_module, "generate_assessment_report", lambda **kw: _canned_assessment_report()
+    )
+    # Seed the counter at the cap so we only need ONE call (the LLM mock makes
+    # 5 quick calls cheap, but seeding is cleaner and avoids state ordering).
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(
+        MonthlyUsage(
+            user_id=TEST_USER_ID,
+            period=period,
+            count=0,
+            assessments_used=FREE_ASSESSMENT_LIMIT,
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+    )
+    assert r.status_code == 402
+    detail = r.json()["detail"]
+    assert "5/month" in detail
+    assert "Upgrade to Pro" in detail
+
+
+def test_assessment_pro_unlimited(client_with_db_and_auth, db_session, monkeypatch):
+    """Pro signed-in users are not metered. Ten calls in a row all succeed,
+    and the assessment counter stays at zero."""
+    from billing import FREE_ASSESSMENT_LIMIT, assessments_used_this_month
+    from conftest import TEST_USER_ID
+    import main as main_module
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    monkeypatch.setattr(
+        main_module, "generate_assessment_report", lambda **kw: _canned_assessment_report()
+    )
+
+    for i in range(FREE_ASSESSMENT_LIMIT * 2):
+        r = client_with_db_and_auth.post(
+            "/assessment",
+            json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+        )
+        assert r.status_code == 200, f"call {i+1} returned {r.status_code}"
+
+    # Pro path bypasses the counter — no row added, or row exists with 0.
+    assert assessments_used_this_month(TEST_USER_ID, db_session) == 0
+
+
+def test_assessment_free_five_real_calls_then_402(client_with_db_and_auth, db_session, monkeypatch):
+    """End-to-end: five real calls succeed, the sixth is refused. Proves the
+    counter is the gate (not test-time seeding)."""
+    import main as main_module
+
+    monkeypatch.setattr(
+        main_module, "generate_assessment_report", lambda **kw: _canned_assessment_report()
+    )
+
+    for i in range(5):
+        r = client_with_db_and_auth.post(
+            "/assessment",
+            json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+        )
+        assert r.status_code == 200, f"call {i+1} returned {r.status_code}"
+
+    r6 = client_with_db_and_auth.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer. Python, AWS."},
+    )
+    assert r6.status_code == 402
+
+
+def test_billing_status_returns_assessment_counters(client_with_db_and_auth, db_session):
+    """The /billing/status payload carries assessments_used + assessment_limit
+    so the frontend can render the "X of 5 used" badge."""
+    from conftest import TEST_USER_ID
+    from db_models import MonthlyUsage
+    from datetime import datetime, timezone
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(
+        MonthlyUsage(
+            user_id=TEST_USER_ID, period=period, count=0, assessments_used=3
+        )
+    )
+    db_session.commit()
+
+    r = client_with_db_and_auth.get("/billing/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["assessments_used"] == 3
+    assert body["assessment_limit"] == 5
+
+
+def test_assessment_pro_via_org_unlimited(
+    client_with_db_auth_and_org, db_session, monkeypatch
+):
+    """Free user inside a Pro org also bypasses the cap (same view-everything
+    policy as the scan quota)."""
+    from datetime import datetime, timedelta, timezone
+
+    from billing import FREE_ASSESSMENT_LIMIT, assessments_used_this_month
+    from conftest import TEST_USER_ID, TEST_ORG_ID
+    from db_models import OrganizationSubscription
+    import main as main_module
+
+    db_session.add(
+        OrganizationSubscription(
+            org_id=TEST_ORG_ID,
+            stripe_customer_id="cus_org",
+            plan="pro",
+            status="active",
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=10),
+        )
+    )
+    db_session.commit()
+    monkeypatch.setattr(
+        main_module, "generate_assessment_report", lambda **kw: _canned_assessment_report()
+    )
+
+    for _ in range(FREE_ASSESSMENT_LIMIT + 1):
+        r = client_with_db_auth_and_org.post(
+            "/assessment",
+            json={"cv_text": "Sarah Chen, Senior Engineer."},
+        )
+        assert r.status_code == 200
+
+    assert assessments_used_this_month(TEST_USER_ID, db_session) == 0
+
+
+def test_assessment_pop_pop_ostriches_dont_increment_on_503(
+    client_with_db_and_auth, db_session, monkeypatch
+):
+    """A note for the future maintainer: consume_assessment_or_refuse runs
+    BEFORE the LLM call, so a 503 from the upstream still burns a token.
+    This is intentionally conservative — same posture as Phase 8.1's
+    /scan-cv reservation — but documented here so anyone reading the
+    counter understands a refused-LLM call still counts."""
+    from assessment import AssessmentError
+    from billing import assessments_used_this_month
+    from conftest import TEST_USER_ID
+    import main as main_module
+
+    def boom(**kw):
+        raise AssessmentError("Assessment service is temporarily unavailable.")
+
+    monkeypatch.setattr(main_module, "generate_assessment_report", boom)
+
+    r = client_with_db_and_auth.post(
+        "/assessment",
+        json={"cv_text": "Sarah Chen, Senior Engineer."},
+    )
+    assert r.status_code == 503
+    # The counter incremented even though the LLM blew up — by design.
+    assert assessments_used_this_month(TEST_USER_ID, db_session) == 1
+
+
 def test_assessment_pro_user_cv_text_path_works(client_with_db_and_auth, db_session, monkeypatch):
     """Pro signed-in user goes through. cv_text path does not persist
     (pre-Phase-7 invariant retained)."""

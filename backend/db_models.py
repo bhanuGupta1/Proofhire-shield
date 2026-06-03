@@ -189,6 +189,11 @@ class MonthlyUsage(Base):
     # comparisons are direct and the column is the same shape on every DB.
     period = Column(String(7), primary_key=True)
     count = Column(Integer, nullable=False, default=0)
+    # Phase 9 — separate counter for Pro-tier-style /assessment quota. Lives
+    # on the same row so the existing per-user/per-month composite PK keeps
+    # both reservations on a single lockable row. Default 0 + migration 0009
+    # adds the column with the same server-side default for pre-existing rows.
+    assessments_used = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False

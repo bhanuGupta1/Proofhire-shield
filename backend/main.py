@@ -61,7 +61,10 @@ from auth import (
     get_current_user_optional,
 )
 from billing import (
+    FREE_ASSESSMENT_LIMIT,
     FREE_SCAN_LIMIT,
+    assessments_used_this_month,
+    consume_assessment_or_refuse,
     consume_or_refuse,
     is_org_pro,
     is_pro,
@@ -587,11 +590,22 @@ def assessment_endpoint(
     _enforce_rate("/assessment", request, current_user, db)
 
     # Phase 9 demo-access policy (supersedes the Phase 7.3 + 7.7 Pro gate):
-    # /assessment is open to ANY authenticated caller. Follow-up questions
-    # (POST /assessment/followup) remain Pro-only, which keeps Pro's
-    # differentiator while letting Free signed-in users see one full report.
-    # The auth dep above still raises 401/503 for anonymous callers, so the
-    # public demo path still requires sign-in.
+    # /assessment is open to ANY authenticated caller. The auth dep above
+    # still raises 401/503 for anonymous callers, so the public demo path
+    # still requires sign-in. Free signed-in callers are metered separately
+    # from /scan-cv (cheap, no LLM) — assessments are LLM-backed and capped
+    # at FREE_ASSESSMENT_LIMIT/month. Pro (personal or org) is unlimited.
+    # DB-unconfigured deployments degrade open (Phase 4/5 invariant).
+    if db is not None and not consume_assessment_or_refuse(
+        current_user, current_org, db
+    ):
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Free assessment limit reached ({FREE_ASSESSMENT_LIMIT}/month)."
+                " Upgrade to Pro for unlimited assessments."
+            ),
+        )
 
     if req.scan_id:
         if db is None:
@@ -932,6 +946,8 @@ def billing_status(
     # /scan-cv will actually enforce. Pre-8.1 free users with Scan rows but
     # no MonthlyUsage row see 0 until their next scan (deploy-day reset).
     used = quota_used_this_month(current_user, db)
+    # Phase 9 — separate assessment counter (Free cap 5/month, Pro unlimited).
+    asst_used = assessments_used_this_month(current_user, db)
     sub = db.query(Subscription).filter(Subscription.user_id == current_user).first()
     period_end = (
         sub.current_period_end.isoformat()
@@ -943,6 +959,8 @@ def billing_status(
         is_pro=pro,
         scans_used=used,
         scan_limit=FREE_SCAN_LIMIT,
+        assessments_used=asst_used,
+        assessment_limit=FREE_ASSESSMENT_LIMIT,
         current_period_end=period_end,
         status=sub.status if sub is not None else None,
         via_org=org_pro and not personal_pro,

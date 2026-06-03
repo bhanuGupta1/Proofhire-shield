@@ -23,6 +23,10 @@ from db_models import MonthlyUsage, OrganizationSubscription, Scan, Subscription
 
 
 FREE_SCAN_LIMIT = 10
+# Phase 9 — Free tier gets 5 LLM-backed assessments per UTC month. Pro is
+# unlimited. Kept separate from the scan cap because scans are cheap (zero
+# LLM) and assessments are expensive (Anthropic / Groq round-trip).
+FREE_ASSESSMENT_LIMIT = 5
 PRO_STATUSES = frozenset({"active", "trialing"})
 
 
@@ -142,6 +146,71 @@ def consume_or_refuse(user_id: str, db: Session) -> bool:
         .where(MonthlyUsage.count < FREE_SCAN_LIMIT)
         .values(
             count=MonthlyUsage.count + 1,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    db.commit()
+    return result.rowcount == 1
+
+
+def assessments_used_this_month(user_id: str, db: Session) -> int:
+    """Phase 9 — read the assessment counter on the user's MonthlyUsage row.
+
+    Mirrors quota_used_this_month for the assessment column. Returns 0 when
+    no row exists for the current period yet (e.g. first scan or assessment
+    of the month hasn't happened)."""
+    row = (
+        db.query(MonthlyUsage)
+        .filter(MonthlyUsage.user_id == user_id)
+        .filter(MonthlyUsage.period == _current_period())
+        .first()
+    )
+    return row.assessments_used if row is not None else 0
+
+
+def consume_assessment_or_refuse(
+    user_id: str, org_id: str | None, db: Session
+) -> bool:
+    """Phase 9 — atomically reserve one Free-tier assessment for this user
+    this month, OR allow unconditionally for an effective Pro caller.
+
+    Returns True iff the caller is allowed to generate. False only when the
+    caller is Free and at/over FREE_ASSESSMENT_LIMIT — the route layer then
+    raises 402 with an upgrade message.
+
+    Pro callers (personal sub OR org-Pro) bypass the counter entirely and
+    are not metered — `assessments_used` stays at 0 for them, which matches
+    the /scan-cv treatment for Pro.
+
+    Race-freedom: the (user_id, period) PK on monthly_usage makes the INSERT
+    path self-serialising; the UPDATE path's WHERE clause is atomic at the
+    row-lock level on both Postgres and SQLite — the same pattern Phase 8.1
+    used for the scan counter. Concurrent assessment attempts serialise on
+    the row and only those that observe count < FREE_ASSESSMENT_LIMIT
+    succeed (rowcount==1).
+    """
+    if is_pro_for(user_id, org_id, db):
+        return True
+
+    period = _current_period()
+    try:
+        db.add(
+            MonthlyUsage(
+                user_id=user_id, period=period, count=0, assessments_used=1
+            )
+        )
+        db.commit()
+        return True
+    except IntegrityError:
+        db.rollback()
+
+    result = db.execute(
+        update(MonthlyUsage)
+        .where(MonthlyUsage.user_id == user_id)
+        .where(MonthlyUsage.period == period)
+        .where(MonthlyUsage.assessments_used < FREE_ASSESSMENT_LIMIT)
+        .values(
+            assessments_used=MonthlyUsage.assessments_used + 1,
             updated_at=datetime.now(timezone.utc),
         )
     )

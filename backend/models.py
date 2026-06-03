@@ -144,6 +144,11 @@ class BillingStatusResponse(BaseModel):
     is_pro: bool
     scans_used: int = Field(ge=0)
     scan_limit: int = Field(ge=0)
+    # Phase 9 — assessment quota, separate from the scan quota. Pro callers
+    # still see `assessments_used` (so the meter doesn't disappear when they
+    # subscribe), but the limit is informational since Pro is unlimited.
+    assessments_used: int = Field(default=0, ge=0)
+    assessment_limit: int = Field(default=5, ge=0)
     current_period_end: str | None = None  # ISO 8601 — when the Pro period renews/ends
     status: str | None = None  # raw Stripe subscription status, for display
     via_org: bool = False  # Phase 8.3 — Pro inherited from the active org's subscription
