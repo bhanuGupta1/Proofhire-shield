@@ -554,11 +554,62 @@ class MatchAnalysis:
     red_flags: list[str]
 
 
+def _years_to_tier(years: int | None) -> str:
+    """Map a years-of-experience integer back to a tier label, using the
+    same buckets as _compute_experience_tier's years_score path. Used
+    when the LLM gives us a years figure directly and we need a tier
+    that matches it without re-running the regex+seniority-keyword
+    blend (which is what produced the wrong tier in the first place)."""
+    if not years:
+        return "Entry"
+    if years >= 10:
+        return "Principal / Lead"
+    if years >= 5:
+        return "Senior"
+    if years >= 2:
+        return "Mid-level"
+    return "Entry"
+
+
 def analyze_match(text: str) -> MatchAnalysis:
-    """Run all heuristics and return a MatchAnalysis."""
+    """Run all heuristics and return a MatchAnalysis.
+
+    Phase 9 v3 — when an LLM provider is configured (GROQ_API_KEY or
+    ANTHROPIC_API_KEY), the regex's education_level and years_experience
+    are overridden by an LLM extraction pass that reads the CV with
+    context. The LLM ignores decorative degree mentions outside the
+    candidate's own education ("MSc dissertation supervisor",
+    "MSc-level coursework", "taught a Bachelor's programme"). Any LLM
+    failure mode — no key, network error, parse failure, invalid level
+    — silently falls back to the regex result, so deployments without
+    an LLM keep the existing behaviour.
+    """
     skills = _extract_skills(text)
     tier, years = _compute_experience_tier(text)
     education = _detect_education(text)
+
+    # Best-effort LLM refinement. Returns None when no provider is
+    # configured, which keeps existing tests (no API key in test env)
+    # on the regex path.
+    try:
+        from cv_llm_extract import extract_cv_facts
+
+        llm_facts = extract_cv_facts(text)
+    except Exception:
+        llm_facts = None
+    if llm_facts:
+        llm_level = llm_facts.get("education_level")
+        llm_years = llm_facts.get("years_experience")
+        if llm_level:
+            education = llm_level
+        if llm_years is not None:
+            years = llm_years
+            # Recompute tier from the refined years figure. Drop the
+            # seniority-keyword blend (which inflated "Senior" CVs with
+            # no years) — the LLM already saw the same text and gave us
+            # the canonical years count.
+            tier = _years_to_tier(llm_years)
+
     probes = _generate_probes(skills, tier)
     claims = _extract_key_claims(text)
     total = sum(len(v) for v in skills.values())

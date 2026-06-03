@@ -319,6 +319,119 @@ def test_academic_background_synonym_recognised():
     assert _detect_education(cv) == "PhD"
 
 
+# ── Phase 9 v3 — LLM-augmented analyze_match overrides regex output ─────────
+
+def test_analyze_match_llm_overrides_regex_education(monkeypatch):
+    """The actual user-reported bug. A Bachelor's CV with no clean Education
+    heading was being labelled Master's by the regex because "MSc" appeared
+    in a project description. With an LLM mocked to return Bachelor's, the
+    regex result is overridden."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: {
+            "education_level": "Bachelor's",
+            "years_experience": 2,
+        },
+    )
+
+    cv = (
+        "Bhanu Gupta\n"
+        "React / Next.js engineer. Worked under an MSc mentor on a "
+        "Next.js platform. Built tooling for an MSc-level course at "
+        "the local university. Education: BSc Computer Science.\n"
+    )
+    result = analyze_match(cv)
+    assert result.education_level == "Bachelor's"
+    assert result.years_experience == 2
+    # Tier follows the LLM-given years figure.
+    assert result.experience_tier == "Mid-level"
+
+
+def test_analyze_match_falls_back_to_regex_when_llm_returns_none(monkeypatch):
+    """LLM unavailable / parse failure / unconfigured → silently keep the
+    regex result. Existing CVs with no API key in the env hit this path."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(
+        cv_llm_extract, "extract_cv_facts", lambda *a, **kw: None
+    )
+
+    cv = "BSc in Computer Science. Senior Engineer at Stripe. 8 years experience."
+    result = analyze_match(cv)
+    # Regex result stands — same as the pre-LLM behaviour.
+    assert result.education_level == "Bachelor's"
+    assert result.years_experience == 8
+    assert result.experience_tier == "Senior"
+
+
+def test_analyze_match_llm_only_overrides_years_when_provided(monkeypatch):
+    """The LLM can return education_level without a years figure (or vice
+    versa). The unmocked field must keep its regex value."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: {"education_level": "Master's", "years_experience": None},
+    )
+
+    cv = "Senior Engineer, 6 years experience. BSc CS, with MSc in AI from MIT."
+    result = analyze_match(cv)
+    # Education overridden to Master's per LLM.
+    assert result.education_level == "Master's"
+    # Years stays at the regex value (6) because LLM said None.
+    assert result.years_experience == 6
+    assert result.experience_tier == "Senior"
+
+
+def test_analyze_match_llm_recomputes_tier_from_overridden_years(monkeypatch):
+    """If the LLM gives us a years figure that disagrees with the regex's
+    seniority-keyword inflation, the tier follows the LLM years — the
+    regex's keyword inflation is dropped."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: {
+            "education_level": "Bachelor's",
+            "years_experience": 1,
+        },
+    )
+
+    # Regex would pick up "Senior" from the keyword and inflate the tier;
+    # the LLM-provided 1-year figure forces Entry.
+    cv = "Senior Software Engineer at Stripe. BSc CS."
+    result = analyze_match(cv)
+    assert result.years_experience == 1
+    assert result.experience_tier == "Entry"
+
+
+def test_analyze_match_swallows_llm_exception(monkeypatch):
+    """Even an exception escaping from extract_cv_facts must not surface
+    — the regex result is the silent fallback."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    def boom(*a, **kw):
+        raise RuntimeError("network exploded")
+
+    monkeypatch.setattr(cv_llm_extract, "extract_cv_facts", boom)
+
+    cv = "BSc in CS. 3 years building Python services."
+    result = analyze_match(cv)
+    assert result.education_level == "Bachelor's"
+    assert result.years_experience == 3
+    assert result.experience_tier == "Mid-level"
+
+
 # ── Interview probes ─────────────────────────────────────────────────────────────
 
 def test_probes_generated():
