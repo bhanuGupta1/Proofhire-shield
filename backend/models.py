@@ -40,6 +40,9 @@ class JDMatchResultModel(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     bonus_skills: list[str]
+    # Phase 9 — human-readable explanation when score is bounded by JD
+    # quality (sparse JD → capped at 60). Empty when the score is full-confidence.
+    coverage_note: str = ""
 
 
 class JDMatchRequest(BaseModel):

@@ -57,6 +57,8 @@ export interface JDMatchResult {
   matched_skills: string[]
   missing_skills: string[]
   bonus_skills: string[]
+  // Phase 9 — explanation rendered under the score when sparse JDs cap it.
+  coverage_note?: string
 }
 
 export interface AssessmentDimension {

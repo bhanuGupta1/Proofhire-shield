@@ -135,6 +135,12 @@ export function JDMatcher({ cvText }: Props) {
             <p className={`mt-2 text-sm font-semibold ${scoreColour(result.match_score).split(' ')[0]}`}>
               {scoreLabel(result.match_score)}
             </p>
+            {result.coverage_note && (
+              <div className="mt-3 inline-flex max-w-md items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                <svg className="mt-0.5 h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span>{result.coverage_note}</span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

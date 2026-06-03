@@ -550,6 +550,7 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
         matched_skills=result.matched_skills,
         missing_skills=result.missing_skills,
         bonus_skills=result.bonus_skills,
+        coverage_note=result.coverage_note,
     )
 
 

@@ -244,11 +244,28 @@ def test_candidate_summary_nonempty_via_api():
 # ── /match-jd endpoint ───────────────────────────────────────────────────────
 
 def test_match_jd_endpoint_returns_score():
+    """Phase 9 — a one-skill JD is sparse, score capped at 60 with a note."""
     r = client.post("/match-jd", json={"cv_text": "Python, AWS, Docker.", "jd_text": "Need Python."})
     assert r.status_code == 200
     body = r.json()
-    assert body["match_score"] >= 70
+    assert body["match_score"] <= 60
     assert "Python" in body["matched_skills"]
+    assert body["coverage_note"]  # explains the cap
+
+
+def test_match_jd_endpoint_returns_full_score_with_dense_jd():
+    """A JD with 3+ skills is statistically informative; no cap, no note."""
+    r = client.post(
+        "/match-jd",
+        json={
+            "cv_text": "Python, AWS, Docker, PostgreSQL.",
+            "jd_text": "We need Python, AWS, and PostgreSQL.",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["match_score"] > 60
+    assert body["coverage_note"] == ""
 
 
 def test_match_jd_empty_text_rejected():

@@ -28,6 +28,16 @@ class JDMatchResult:
     matched_skills: list[str]
     missing_skills: list[str]
     bonus_skills: list[str]
+    # Phase 9 — human-readable explanation when the score is bounded by JD
+    # quality rather than actual fit (sparse JD → score is unreliable).
+    coverage_note: str = ""
+
+
+# Phase 9 — when a JD surfaces fewer than this many recognisable skills the
+# overlap score is statistically unreliable; cap at MAX so a 1-skill JD that
+# happens to overlap with the CV cannot return 100/100.
+_MIN_JD_SKILLS_FOR_FULL_SCORE = 3
+_SPARSE_JD_SCORE_CAP = 60
 
 
 def extract_jd_keywords(jd_text: str) -> dict[str, list[str]]:
@@ -66,11 +76,26 @@ def score_match(
 
     score = int(round(100 * earned / total_weight)) if total_weight else 0
 
+    # Phase 9 — sparse-JD safeguard. A JD with only one or two recognisable
+    # skills can produce a 100% overlap by coincidence; cap and explain so a
+    # recruiter doesn't read 100/100 as a confident endorsement.
+    coverage_note = ""
+    jd_skill_count = len(jd_flat)
+    if jd_skill_count < _MIN_JD_SKILLS_FOR_FULL_SCORE:
+        score = min(score, _SPARSE_JD_SCORE_CAP)
+        coverage_note = (
+            f"Only {jd_skill_count} recognisable skill"
+            f"{'s' if jd_skill_count != 1 else ''} found in the JD — score is"
+            " capped at "
+            f"{_SPARSE_JD_SCORE_CAP}/100 until the JD lists more requirements."
+        )
+
     return JDMatchResult(
         match_score=score,
         matched_skills=matched,
         missing_skills=missing,
         bonus_skills=bonus,
+        coverage_note=coverage_note,
     )
 
 
