@@ -42,7 +42,12 @@ from match_analysis import analyze_match
 from db import get_db
 from db_models import Assessment, Scan, Subscription, WebhookEvent
 from auth import get_current_user, get_current_user_optional, get_current_org_optional
-from billing import FREE_SCAN_LIMIT, is_pro, scans_used_this_month
+from billing import (
+    FREE_SCAN_LIMIT,
+    consume_or_refuse,
+    is_pro,
+    quota_used_this_month,
+)
 from stripe_billing import (
     BillingError,
     WebhookError,
@@ -127,12 +132,15 @@ async def scan_cv(
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
-    # Phase 7.2 — free-tier quota gate. Anonymous (no current_user) is unmetered
-    # so the demo path keeps working; DB-unconfigured deployments degrade open
-    # (Phase 4/5 backward-compat invariant). Pro bypasses unconditionally.
-    # Checked first so a free user at the cap never pays the file-read cost.
+    # Phase 7.2 + 8.1 — free-tier quota gate, atomic via consume_or_refuse.
+    # Anonymous (no current_user) is unmetered so the demo path keeps working;
+    # DB-unconfigured deployments degrade open (Phase 4/5 backward-compat
+    # invariant). Pro bypasses unconditionally. Checked first so a free user
+    # at the cap never pays the file-read cost. consume_or_refuse RESERVES the
+    # slot before the scan runs — a failed scan still counts (conservative),
+    # which avoids a refund race and matches "reservation, not optimistic".
     if current_user is not None and db is not None and not is_pro(current_user, db):
-        if scans_used_this_month(current_user, db) >= FREE_SCAN_LIMIT:
+        if not consume_or_refuse(current_user, db):
             raise HTTPException(
                 status_code=402,
                 detail=(
@@ -588,7 +596,10 @@ def billing_status(
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
     pro = is_pro(current_user, db)
-    used = scans_used_this_month(current_user, db)
+    # Phase 8.1: read the gate-authoritative counter so the UI shows what
+    # /scan-cv will actually enforce. Pre-8.1 free users with Scan rows but
+    # no MonthlyUsage row see 0 until their next scan (deploy-day reset).
+    used = quota_used_this_month(current_user, db)
     sub = db.query(Subscription).filter(Subscription.user_id == current_user).first()
     period_end = (
         sub.current_period_end.isoformat()

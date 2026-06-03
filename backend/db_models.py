@@ -133,6 +133,35 @@ class Subscription(Base):
     )
 
 
+class MonthlyUsage(Base):
+    """Atomic per-user monthly scan-quota counter (Phase 8.1).
+
+    Replaces the Phase-7 count-then-check pattern (Codex P7 round-2 MED) that
+    raced under concurrent /scan-cv calls. The composite PK on (user_id,
+    period) lets the DB itself serialise concurrent reservations: the gate
+    runs INSERT first, then falls back to an UPDATE-WHERE-count<limit when
+    the row exists. Both Postgres (production) and SQLite (tests) lock the
+    target row during UPDATE, so concurrent callers serialise and only
+    those who land before count == FREE_SCAN_LIMIT succeed.
+
+    Pro callers short-circuit BEFORE hitting this table — Pro usage is
+    unmetered and not tracked here.
+    """
+
+    __tablename__ = "monthly_usage"
+
+    # Clerk sub.
+    user_id = Column(String(64), primary_key=True)
+    # UTC calendar month as 'YYYY-MM'. String, not date, so sorting / equality
+    # comparisons are direct and the column is the same shape on every DB.
+    period = Column(String(7), primary_key=True)
+    count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
 class WebhookEvent(Base):
     """Stripe webhook idempotency ledger (Phase 7.5).
 

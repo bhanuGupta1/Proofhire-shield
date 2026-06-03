@@ -943,10 +943,12 @@ def test_get_scan_other_org_returns_404(client_with_db_auth_and_org, db_session)
 # ── Phase 7.2: free-tier quota gate on /scan-cv + /trust-report ──────────────
 
 def _seed_persisted_scans(db_session, *, user_id, count):
-    """Stuff `count` Scan rows for `user_id` into the current UTC month so the
-    quota counter sees them. Minimal field set (the quota query only cares
-    about user_id + created_at)."""
-    from db_models import Scan
+    """Stuff `count` Scan rows for `user_id` into the current UTC month AND
+    bump the Phase-8.1 MonthlyUsage counter so the atomic gate sees the same
+    picture. Tests that previously relied on `COUNT(*) FROM scans` for the
+    gate still work because both numbers move together."""
+    from datetime import datetime, timezone
+    from db_models import MonthlyUsage, Scan
 
     for i in range(count):
         db_session.add(
@@ -964,6 +966,19 @@ def _seed_persisted_scans(db_session, *, user_id, count):
                 match_analysis={"summary": "ok"},
             )
         )
+    if count > 0:
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        existing = (
+            db_session.query(MonthlyUsage)
+            .filter_by(user_id=user_id, period=period)
+            .first()
+        )
+        if existing is None:
+            db_session.add(
+                MonthlyUsage(user_id=user_id, period=period, count=count)
+            )
+        else:
+            existing.count = max(existing.count, count)
     db_session.commit()
 
 

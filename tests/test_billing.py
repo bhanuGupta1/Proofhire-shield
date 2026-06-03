@@ -410,3 +410,154 @@ def test_verify_event_returns_parsed_event_and_forwards_args(monkeypatch):
     event = verify_and_parse_event(b'{"x":1}', "t=1,v1=ok")
     assert event["id"] == "evt_1"
     assert seen["args"] == (b'{"x":1}', "t=1,v1=ok", "whsec_dummy")
+
+
+# ── Phase 8.1 — atomic monthly_usage counter ─────────────────────────────────
+
+from billing import consume_or_refuse, quota_used_this_month
+
+
+def test_monthly_usage_table_present_on_engine(db_session):
+    insp = inspect(db_session.get_bind())
+    assert "monthly_usage" in insp.get_table_names()
+
+
+def test_monthly_usage_has_composite_primary_key(db_session):
+    """Composite PK on (user_id, period) is what makes the consume_or_refuse
+    INSERT path race-free — two concurrent first-of-month INSERTs for the
+    same user collide on the PK and only one survives."""
+    insp = inspect(db_session.get_bind())
+    pk = insp.get_pk_constraint("monthly_usage")
+    assert set(pk["constrained_columns"]) == {"user_id", "period"}
+
+
+def test_quota_used_this_month_returns_zero_when_no_row(db_session):
+    assert quota_used_this_month("user_nobody", db_session) == 0
+
+
+def test_quota_used_this_month_returns_stored_count(db_session):
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(MonthlyUsage(user_id="user_a", period=period, count=7))
+    db_session.commit()
+    assert quota_used_this_month("user_a", db_session) == 7
+
+
+def test_quota_used_this_month_ignores_other_periods(db_session):
+    """A row for last month must NOT bleed into this month's display."""
+    from db_models import MonthlyUsage
+
+    db_session.add(MonthlyUsage(user_id="user_b", period="2024-01", count=99))
+    db_session.commit()
+    assert quota_used_this_month("user_b", db_session) == 0
+
+
+def test_quota_used_this_month_scopes_to_user(db_session):
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(MonthlyUsage(user_id="user_me", period=period, count=4))
+    db_session.add(MonthlyUsage(user_id="user_other", period=period, count=99))
+    db_session.commit()
+    assert quota_used_this_month("user_me", db_session) == 4
+    assert quota_used_this_month("user_other", db_session) == 99
+
+
+def test_consume_or_refuse_creates_row_on_first_call(db_session):
+    """Cold cache → INSERT path → returns True, row exists with count=1."""
+    from db_models import MonthlyUsage
+
+    assert consume_or_refuse("user_new", db_session) is True
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    row = (
+        db_session.query(MonthlyUsage)
+        .filter_by(user_id="user_new", period=period)
+        .first()
+    )
+    assert row is not None
+    assert row.count == 1
+
+
+def test_consume_or_refuse_increments_existing_row(db_session):
+    """Existing row, count below cap → UPDATE path → count goes up by one."""
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(MonthlyUsage(user_id="user_inc", period=period, count=3))
+    db_session.commit()
+
+    assert consume_or_refuse("user_inc", db_session) is True
+    db_session.expire_all()
+    row = (
+        db_session.query(MonthlyUsage)
+        .filter_by(user_id="user_inc", period=period)
+        .first()
+    )
+    assert row.count == 4
+
+
+def test_consume_or_refuse_refuses_at_cap(db_session):
+    """At FREE_SCAN_LIMIT, the UPDATE WHERE count < limit matches no rows."""
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(
+        MonthlyUsage(user_id="user_cap", period=period, count=FREE_SCAN_LIMIT)
+    )
+    db_session.commit()
+
+    assert consume_or_refuse("user_cap", db_session) is False
+    db_session.expire_all()
+    row = (
+        db_session.query(MonthlyUsage)
+        .filter_by(user_id="user_cap", period=period)
+        .first()
+    )
+    assert row.count == FREE_SCAN_LIMIT, "refused call must NOT increment"
+
+
+def test_consume_or_refuse_refuses_when_over_cap(db_session):
+    """Defensive: a row that's already past the cap (manual write, prior bug)
+    stays refused."""
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(
+        MonthlyUsage(
+            user_id="user_over", period=period, count=FREE_SCAN_LIMIT + 5
+        )
+    )
+    db_session.commit()
+    assert consume_or_refuse("user_over", db_session) is False
+
+
+def test_consume_or_refuse_exact_sequence_one_through_eleven(db_session):
+    """End-to-end: 10 consumes succeed, 11th refused, counter at the cap."""
+    from db_models import MonthlyUsage
+
+    results = [consume_or_refuse("user_seq", db_session) for _ in range(11)]
+    assert results == [True] * FREE_SCAN_LIMIT + [False]
+
+    db_session.expire_all()
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    row = (
+        db_session.query(MonthlyUsage)
+        .filter_by(user_id="user_seq", period=period)
+        .first()
+    )
+    assert row.count == FREE_SCAN_LIMIT
+
+
+def test_consume_or_refuse_scopes_to_user(db_session):
+    """One user at the cap does NOT block another user's reservation."""
+    from db_models import MonthlyUsage
+
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    db_session.add(
+        MonthlyUsage(user_id="user_capped", period=period, count=FREE_SCAN_LIMIT)
+    )
+    db_session.commit()
+
+    assert consume_or_refuse("user_capped", db_session) is False
+    assert consume_or_refuse("user_clean", db_session) is True
