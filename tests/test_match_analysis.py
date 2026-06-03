@@ -173,6 +173,57 @@ def test_bootcamp_detection():
     assert _detect_education(text) == "Certification / Bootcamp"
 
 
+# ── Phase 9 fix — bare-abbreviation false positives ─────────────────────────
+# A Bachelor's CV that mentioned "MS Office" used to be labelled Master's
+# because the Master's regex's bare `m\.?s\.?` alternative matched "MS".
+# Same trap on b\.?s\.? (BS Office), b\.?e\.? ("be a senior"), a\.?s\.?
+# ("as a team lead").
+
+def test_ms_office_does_not_inflate_to_masters():
+    text = "BSc Computer Science, 2020. Skills: Python, AWS, MS Office, MS Excel."
+    assert _detect_education(text) == "Bachelor's"
+
+
+def test_microsoft_abbreviation_does_not_inflate_to_masters():
+    text = "Bachelor of Engineering, IIT Delhi. Built tools on top of MS SQL Server."
+    assert _detect_education(text) == "Bachelor's"
+
+
+def test_word_be_does_not_match_bachelors():
+    """The verb "be" used to trigger Bachelor's via the bare `b\\.?e\\.?`
+    alternative. Without other degree text the result must be Not specified,
+    not Bachelor's."""
+    text = "I'd like to be a backend developer focused on Python."
+    assert _detect_education(text) == "Not specified"
+
+
+def test_word_as_does_not_match_associates():
+    """The word "as" used to trigger Associate's via bare `a\\.?s\\.?`."""
+    text = "Working as a team lead at Stripe for 4 years."
+    assert _detect_education(text) == "Not specified"
+
+
+def test_punctuated_ms_still_matches_masters():
+    """`M.S.` and `M.S` (with at least the first dot) are legitimate
+    academic abbreviations — the fix must keep these matching."""
+    assert _detect_education("M.S. in Computer Science, Stanford.") == "Master's"
+    assert _detect_education("M.S in CS from MIT.") == "Master's"
+
+
+def test_punctuated_bs_still_matches_bachelors():
+    assert _detect_education("B.S. in Mathematics, UC Berkeley.") == "Bachelor's"
+    assert _detect_education("B.S in EE, Caltech.") == "Bachelor's"
+
+
+def test_punctuated_be_still_matches_bachelors():
+    assert _detect_education("B.E. in Computer Science, IIT Bombay.") == "Bachelor's"
+    assert _detect_education("B.E in CS, Anna University.") == "Bachelor's"
+
+
+def test_punctuated_as_still_matches_associates():
+    assert _detect_education("A.S. in Information Technology, community college.") == "Associate's"
+
+
 # ── Interview probes ─────────────────────────────────────────────────────────────
 
 def test_probes_generated():

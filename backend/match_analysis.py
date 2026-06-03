@@ -150,11 +150,19 @@ def _compute_experience_tier(text: str) -> tuple[str, int | None]:
 
 # ── Education level ────────────────────────────────────────────────────────────
 
+# Phase 9 fix — the bare-two-letter abbreviations `MS`, `BS`, `BE`, `AS`
+# matched anywhere by the previous regex (e.g. "MS Office", "be a senior
+# engineer", "as a team lead"), which combined with the highest-rank-wins
+# resolution silently inflated education levels — a Bachelor's CV listing
+# "MS Excel" was being labelled Master's. The first dot is now required on
+# every two-letter alternative, so "M.S." and "M.S" still match for an
+# academic CV but the bare-word collisions are gone. `MSc` / `BSc` / `BEng`
+# / `MBA` / "Bachelor" / "Master" keep working unchanged.
 _EDU_PATTERNS = [
     (re.compile(r"\b(ph\.?d|doctor(?:ate)?)\b", re.IGNORECASE), "PhD"),
-    (re.compile(r"\b(m\.?sc|m\.?s\.?|master(?:s)?(?:\sof)?|mba|meng)\b", re.IGNORECASE), "Master's"),
-    (re.compile(r"\b(b\.?sc|b\.?s\.?|b\.?e\.?|b\.?eng|bachelor(?:s)?(?:\sof)?|b\.a\.?)\b", re.IGNORECASE), "Bachelor's"),
-    (re.compile(r"\b(associate(?:s)?(?:\sdegree)?|a\.?s\.?|a\.?a\.?)\b", re.IGNORECASE), "Associate's"),
+    (re.compile(r"\b(m\.?sc|m\.s\.?|master(?:s)?(?:\sof)?|mba|meng)\b", re.IGNORECASE), "Master's"),
+    (re.compile(r"\b(b\.?sc|b\.s\.?|b\.e\.?|b\.?eng|bachelor(?:s)?(?:\sof)?|b\.a\.?)\b", re.IGNORECASE), "Bachelor's"),
+    (re.compile(r"\b(associate(?:s)?(?:\sdegree)?|a\.s\.?|a\.a\.?)\b", re.IGNORECASE), "Associate's"),
     (re.compile(r"\b(high school|secondary school|diploma|ged)\b", re.IGNORECASE), "High School"),
     (re.compile(r"\b(bootcamp|boot camp|self-?taught|online course|certification)\b", re.IGNORECASE), "Certification / Bootcamp"),
 ]
