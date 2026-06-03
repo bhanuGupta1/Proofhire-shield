@@ -23,7 +23,15 @@ import {
   useOnboardingTour,
 } from './components/OnboardingTour'
 import { scanCV, getScan, getBillingStatus, startCheckout, openBillingPortal } from './lib/api'
-import type { ScanResult, BillingStatus } from './lib/types'
+import type { ScanResult, BillingStatus, MatchEngine } from './lib/types'
+
+const MATCH_ENGINE_KEY = 'proofhire_match_engine'
+
+function loadInitialMatchEngine(): MatchEngine {
+  if (typeof window === 'undefined') return 'llm'
+  const v = window.localStorage.getItem(MATCH_ENGINE_KEY)
+  return v === 'regex' ? 'regex' : 'llm'
+}
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
 
@@ -47,6 +55,22 @@ function AppContent() {
 
   const [result, setResult] = useState<ScanResult | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  // Phase 9 v4 — recruiter-selectable match-analysis engine, persisted per
+  // browser. Defaults to "llm" so the context-aware path is the
+  // out-of-the-box experience; switching to "regex" gets the previous
+  // fast/deterministic behaviour.
+  const [matchEngine, setMatchEngineState] = useState<MatchEngine>(
+    () => loadInitialMatchEngine(),
+  )
+  function setMatchEngine(next: MatchEngine) {
+    setMatchEngineState(next)
+    try {
+      window.localStorage.setItem(MATCH_ENGINE_KEY, next)
+    } catch {
+      // Private-mode / quota — silently ignore. The choice still applies
+      // for the current session.
+    }
+  }
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('risk')
@@ -111,7 +135,7 @@ function AppContent() {
     setLoading(true)
     try {
       const token = isSignedIn ? await getToken() : null
-      const resp = await scanCV(f, token)
+      const resp = await scanCV(f, token, matchEngine)
       if (!resp.ok || !resp.result) {
         setError(resp.error ?? 'Scan failed')
       } else {
@@ -325,6 +349,45 @@ function AppContent() {
               style={{ animationDelay: '480ms' }}
             >
               <FileUpload onFile={handleFile} loading={loading} />
+
+              {/* Phase 9 v4 — match-engine selector. Persists per browser
+                  via localStorage. AI = LLM-backed (context-aware,
+                  ~600-1500 ms); Fast = regex-only (deterministic, sub-ms)
+                  with the trade-off documented in the helper text below. */}
+              <div className="mx-auto mt-4 flex max-w-md items-center justify-between rounded-lg border border-gray-200 bg-white/70 px-4 py-2.5 text-xs shadow-sm backdrop-blur-sm">
+                <div>
+                  <p className="font-medium text-gray-700">Match engine</p>
+                  <p className="mt-0.5 text-[11px] leading-tight text-gray-400">
+                    {matchEngine === 'llm'
+                      ? 'AI-assisted reads the CV with context.'
+                      : 'Fast regex — deterministic, but can miss context in rare cases.'}
+                  </p>
+                </div>
+                <div className="flex shrink-0 rounded-md border border-gray-200 bg-gray-50 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setMatchEngine('llm')}
+                    className={`rounded px-2.5 py-1 text-[11px] font-semibold transition ${
+                      matchEngine === 'llm'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    AI
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMatchEngine('regex')}
+                    className={`rounded px-2.5 py-1 text-[11px] font-semibold transition ${
+                      matchEngine === 'regex'
+                        ? 'bg-white text-blue-700 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    Fast
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Trust bar */}

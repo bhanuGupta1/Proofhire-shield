@@ -33,6 +33,31 @@ export function MatchTab({ result }: Props) {
         {m.summary}
       </div>
 
+      {/* Phase 9 v4 — engine badge. Tells the recruiter which path
+          actually produced the education / tier values on THIS scan, so
+          they can sanity-check unexpected labels. "regex" also appears
+          when the LLM was attempted but couldn't complete. */}
+      {m.match_engine && (
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="text-gray-400">Analysed with</span>
+          {m.match_engine === 'llm' ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+              AI engine
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 font-semibold text-gray-600">
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+              Fast engine
+            </span>
+          )}
+        </div>
+      )}
+
       {/* CV completeness meter */}
       <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-center justify-between text-xs">

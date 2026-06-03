@@ -28,6 +28,10 @@ export interface MatchAnalysis {
   summary: string
   completeness: CompletenessResult
   red_flags: string[]
+  // Phase 9 v4 — which engine actually produced education_level + tier.
+  // "regex" = deterministic on-device; "llm" = LLM successfully refined.
+  // Optional for back-compat with older API responses.
+  match_engine?: 'regex' | 'llm'
 }
 
 export interface ScanResult {
@@ -107,6 +111,11 @@ export interface BillingStatus {
 }
 
 export type BillingScope = 'user' | 'org'
+
+// Phase 9 v4 — recruiter-selectable match-analysis engine. "llm" is the
+// context-aware path (Groq → Anthropic); "regex" is fast + deterministic
+// + on-device. Frontend persists the choice per browser.
+export type MatchEngine = 'llm' | 'regex'
 
 // Phase 9 — recruiter co-pilot follow-up answer.
 export interface FollowupResponse {

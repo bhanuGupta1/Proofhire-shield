@@ -30,12 +30,21 @@ async function errorDetail(res: Response): Promise<string> {
   return raw || `Request failed (${res.status})`
 }
 
-export async function scanCV(file: File, token?: string | null): Promise<ScanResponse> {
+export async function scanCV(
+  file: File,
+  token?: string | null,
+  engine?: 'regex' | 'llm',
+): Promise<ScanResponse> {
   const form = new FormData()
   form.append('file', file)
   // Do not set Content-Type here — fetch + FormData generates the multipart
   // boundary header automatically; overriding it breaks the parse.
-  const res = await fetch(`${API_BASE}/scan-cv`, {
+  // Phase 9 v4 — match_engine is a query param so the existing multipart
+  // body shape stays untouched.
+  const url = engine
+    ? `${API_BASE}/scan-cv?match_engine=${engine}`
+    : `${API_BASE}/scan-cv`
+  const res = await fetch(url, {
     method: 'POST',
     headers: bearer(token),
     body: form,
