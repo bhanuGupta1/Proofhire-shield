@@ -209,9 +209,60 @@ export function AssessmentTab({ result, billing, onUpgrade }: Props) {
   }
 
   if (!report) {
+    // Phase 9 — Free-tier quota signals. When billing is null (anonymous /
+    // no-DB deploy), the badge is hidden and we let the server's degrade-
+    // open posture handle it. Pro callers (is_pro: true) never see the
+    // badge or the cap CTA.
+    const limit = billing?.assessment_limit ?? 5
+    const used = billing?.assessments_used ?? 0
+    const isFree = billing !== null && !billing.is_pro
+    const atLimit = isFree && used >= limit
+
+    if (atLimit) {
+      return (
+        <div className="rounded-xl border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-indigo-50 p-6 text-center shadow-sm">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 shadow-md">
+            <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <h3 className="mb-1 text-sm font-semibold text-purple-900">
+            Free assessment limit reached
+          </h3>
+          <p className="mx-auto mb-4 max-w-sm text-xs text-purple-800">
+            You&rsquo;ve used all {limit} free AI assessments this month. Upgrade to
+            Pro for unlimited assessments and follow-up co-pilot questions.
+          </p>
+          <button
+            onClick={onUpgrade}
+            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:from-purple-700 hover:to-indigo-700 hover:shadow-md"
+          >
+            Upgrade to Pro
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+          </button>
+          <p className="mt-3 text-[10px] text-purple-700">
+            Resets on the first of every month.
+          </p>
+        </div>
+      )
+    }
+
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-5">
-        <h3 className="mb-2 text-sm font-semibold text-gray-800">AI assessment report</h3>
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <h3 className="text-sm font-semibold text-gray-800">AI assessment report</h3>
+          {isFree && (
+            <span
+              className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold tracking-wide
+                ${used >= limit - 1
+                  ? 'border-amber-300 bg-amber-50 text-amber-800'
+                  : 'border-gray-200 bg-gray-50 text-gray-600'}`}
+              title="Free tier — resets monthly"
+            >
+              {used} / {limit} free this month
+            </span>
+          )}
+        </div>
         <p className="mb-4 text-xs text-gray-500">
           Generate a structured candidate assessment under the ProofHire v1 framework. The
           report covers profile, strengths, concerns, interview focus, verifiability, trust

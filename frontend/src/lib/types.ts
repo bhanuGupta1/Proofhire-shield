@@ -94,6 +94,10 @@ export interface BillingStatus {
   is_pro: boolean
   scans_used: number
   scan_limit: number
+  // Phase 9 — separate Free-tier counter for /assessment runs (limit 5/month).
+  // Pro callers see used=0 and the limit is informational only.
+  assessments_used?: number
+  assessment_limit?: number
   current_period_end: string | null
   status: string | null
   // Phase 8.3 — true when the caller's Pro comes from the active org's sub,
