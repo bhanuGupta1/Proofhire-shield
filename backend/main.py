@@ -586,16 +586,12 @@ def assessment_endpoint(
     # before we pay any LLM cost on the upstream.
     _enforce_rate("/assessment", request, current_user, db)
 
-    # Phase 7.3 + 7.7 + 8.3 — Pro gate. Auth is required (the dep raises
-    # 401/503 for anonymous callers before we get here); the effective check
-    # is personal Pro OR org-Pro for the caller's active Clerk org.
-    # DB-unconfigured deployments degrade open so dev/staging without
-    # persistence still works.
-    if db is not None and not is_pro_for(current_user, current_org, db):
-        raise HTTPException(
-            status_code=402,
-            detail="Assessment generation requires a Pro subscription.",
-        )
+    # Phase 9 demo-access policy (supersedes the Phase 7.3 + 7.7 Pro gate):
+    # /assessment is open to ANY authenticated caller. Follow-up questions
+    # (POST /assessment/followup) remain Pro-only, which keeps Pro's
+    # differentiator while letting Free signed-in users see one full report.
+    # The auth dep above still raises 401/503 for anonymous callers, so the
+    # public demo path still requires sign-in.
 
     if req.scan_id:
         if db is None:

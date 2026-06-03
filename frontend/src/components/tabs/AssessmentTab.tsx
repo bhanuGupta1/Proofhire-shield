@@ -1,12 +1,159 @@
 import { useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import type { ScanResult, AssessmentReport, BillingStatus } from '../../lib/types'
-import { generateAssessment } from '../../lib/api'
+import { generateAssessment, sendFollowup } from '../../lib/api'
 
 interface Props {
   result: ScanResult
   billing: BillingStatus | null
   onUpgrade: () => void
+}
+
+const FOLLOWUP_MAX = 500
+
+
+function CoPilotCard({
+  scanId,
+  isPro,
+  onUpgrade,
+}: {
+  scanId: string | null
+  isPro: boolean
+  onUpgrade: () => void
+}) {
+  const { getToken } = useAuth()
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // The endpoint identifies the candidate by scan_id, so a re-uploaded
+  // (history-loaded) ScanResult without a scan_id can't be queried.
+  // Surface that as a friendly explanation instead of a 422 / 404 dead-end.
+  const canAsk = isPro && Boolean(scanId)
+
+  async function handleAsk() {
+    if (!canAsk || !question.trim() || !scanId) return
+    setBusy(true)
+    setError(null)
+    setAnswer(null)
+    try {
+      const token = await getToken()
+      if (!token) {
+        setError('Please sign in.')
+        return
+      }
+      const r = await sendFollowup(scanId, question.trim(), token)
+      setAnswer(r.answer)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!isPro) {
+    return (
+      <div className="rounded-xl border border-purple-200 bg-gradient-to-br from-purple-50 to-indigo-50 p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 shadow-sm">
+            <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h8m-4-4v8m9-4a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <div className="grow">
+            <h3 className="text-sm font-semibold text-purple-900">Ask a follow-up</h3>
+            <p className="mt-1 text-xs text-purple-800">
+              Pro users can ask a follow-up question about this candidate — strengths to probe in the interview, evidence gaps to clarify, fit for a specific role.
+            </p>
+            <button
+              onClick={onUpgrade}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:from-purple-700 hover:to-indigo-700 hover:shadow-md"
+            >
+              Upgrade to Pro to ask follow-up questions
+              <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-purple-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 shadow-sm">
+          <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h8m-4-4v8m9-4a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Ask the co-pilot</h3>
+          <p className="text-xs text-gray-500">
+            One question about this candidate, grounded in their scan signals + CV. Plain-prose answer.
+          </p>
+        </div>
+      </div>
+
+      {!scanId && (
+        <p className="mb-2 text-xs italic text-amber-700">
+          Re-upload the CV to ask a follow-up — this view was loaded from history.
+        </p>
+      )}
+
+      <textarea
+        value={question}
+        onChange={(e) => setQuestion(e.target.value.slice(0, FOLLOWUP_MAX))}
+        placeholder="e.g. How strong is the candidate's AWS experience based on the evidence?"
+        rows={3}
+        maxLength={FOLLOWUP_MAX}
+        disabled={!canAsk || busy}
+        className="w-full resize-y rounded-lg border border-gray-300 bg-white p-3 text-sm text-gray-800 shadow-inner transition focus:border-purple-500 focus:ring-2 focus:ring-purple-100 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-50"
+      />
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-xs text-gray-400">
+          {question.length} / {FOLLOWUP_MAX}
+        </span>
+        <button
+          onClick={handleAsk}
+          disabled={!canAsk || !question.trim() || busy}
+          className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-purple-700 hover:to-indigo-700 hover:shadow-md disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-500 disabled:shadow-none"
+        >
+          {busy ? (
+            <>
+              <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              Asking…
+            </>
+          ) : (
+            <>
+              Ask
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </>
+          )}
+        </button>
+      </div>
+
+      {answer && (
+        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50/80 p-4 shadow-inner">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+            Co-pilot
+          </p>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
+            {answer}
+          </p>
+        </div>
+      )}
+      {error && (
+        <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          {error}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function scoreColour(score: number): string {
@@ -36,10 +183,10 @@ export function AssessmentTab({ result, billing, onUpgrade }: Props) {
     }
   }
 
-  // Assessment is Pro-only server-side. When we positively know the signed-in
-  // caller is on Free, show an upgrade CTA instead of letting them hit a 402.
-  // Unknown billing (anonymous, or a deployment without a database) falls
-  // through to the form — the backend degrades open in those cases.
+  // Phase 9 — Assessment is now open to any signed-in caller (Free or Pro).
+  // The Pro differentiator moved to the follow-up co-pilot card rendered
+  // below the report. Anonymous still gets the sign-in CTA so we never
+  // surface "Generate" against an endpoint that will 401.
   if (!isSignedIn) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6 text-center">
@@ -57,30 +204,6 @@ export function AssessmentTab({ result, billing, onUpgrade }: Props) {
         >
           Sign in — it&apos;s free
         </a>
-      </div>
-    )
-  }
-
-  const proRequired = billing !== null && !billing.is_pro
-  if (proRequired && !report) {
-    return (
-      <div className="rounded-xl border border-gray-200 bg-white p-6 text-center">
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-2xl">
-          🔒
-        </div>
-        <h3 className="mb-1 text-sm font-semibold text-gray-800">
-          AI assessment reports are a Pro feature
-        </h3>
-        <p className="mx-auto mb-4 max-w-sm text-xs text-gray-500">
-          Upgrade to generate a structured candidate assessment with strengths,
-          concerns, interview focus, verifiability, and a recommendation.
-        </p>
-        <button
-          onClick={onUpgrade}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          Upgrade to Pro
-        </button>
       </div>
     )
   }
@@ -183,6 +306,15 @@ export function AssessmentTab({ result, billing, onUpgrade }: Props) {
           ))}
         </ol>
       </div>
+
+      {/* Phase 9 — recruiter co-pilot card. Shown to every signed-in caller;
+          the card itself decides whether to render the input (Pro) or the
+          upgrade CTA (Free). */}
+      <CoPilotCard
+        scanId={result.scan_id ?? null}
+        isPro={billing?.is_pro ?? false}
+        onUpgrade={onUpgrade}
+      />
 
       {/* Framework label + regenerate */}
       <div className="flex items-center justify-between">

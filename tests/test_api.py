@@ -1171,11 +1171,29 @@ def test_trust_report_pro_user_bypasses_quota(client_with_db_and_auth, db_sessio
     assert r.headers["content-type"] == "application/pdf"
 
 
-# ── Phase 7.3: Pro gate on /assessment ───────────────────────────────────────
+# ── Phase 9 demo-access policy on /assessment ────────────────────────────────
+# Supersedes the Phase 7.3 / 7.7 Pro gate. /assessment is now open to any
+# signed-in caller (Free or Pro). The Pro differentiator moves to the
+# follow-up endpoint (POST /assessment/followup — see Phase 9.2 tests).
 
-def test_assessment_free_signed_in_user_returns_402(client_with_db_and_auth, db_session):
-    """A signed-in caller without an active Pro subscription gets 402 on
-    /assessment, regardless of cv_text vs scan_id input."""
+def test_assessment_free_signed_in_cv_text_path_open(client_with_db_and_auth, db_session, monkeypatch):
+    """Phase 9 — Free signed-in users can now generate one report (no 402).
+    The 503 from no-API-key envs is the only barrier; with a mocked report
+    function they get 200."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
+    import main as main_module
+
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="ok",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="Worth interviewing",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
+
     r = client_with_db_and_auth.post(
         "/assessment",
         json={
@@ -1183,22 +1201,33 @@ def test_assessment_free_signed_in_user_returns_402(client_with_db_and_auth, db_
             "role_context": "Senior backend.",
         },
     )
-    assert r.status_code == 402
-    assert "Pro subscription" in r.json()["detail"]
+    assert r.status_code == 200
 
 
-def test_assessment_free_signed_in_scan_id_path_also_blocked(client_with_db_and_auth, db_session):
-    """scan_id input mode hits the Pro gate too — free user with a valid own
-    scan still gets 402, not 200, not 404."""
+def test_assessment_free_signed_in_scan_id_path_open(client_with_db_and_auth, db_session, monkeypatch):
+    """Phase 9 — Free signed-in users with their own scan can also run
+    /assessment via scan_id."""
+    from assessment import AssessmentDimension, AssessmentReport, FRAMEWORK_NAME
     from conftest import TEST_USER_ID
+    import main as main_module
 
     scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+    canned = AssessmentReport(
+        framework=FRAMEWORK_NAME,
+        headline="ok",
+        dimensions=[AssessmentDimension(name="X", text="Y")],
+        overall_recommendation="Worth interviewing",
+        overall_score=70,
+        next_steps=["a", "b", "c"],
+        provider_used="anthropic",
+    )
+    monkeypatch.setattr(main_module, "generate_assessment_report", lambda **kw: canned)
 
     r = client_with_db_and_auth.post(
         "/assessment",
         json={"scan_id": str(scan.id)},
     )
-    assert r.status_code == 402
+    assert r.status_code == 200
 
 
 def test_assessment_pro_user_cv_text_path_works(client_with_db_and_auth, db_session, monkeypatch):

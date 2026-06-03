@@ -103,3 +103,8 @@ export interface BillingStatus {
 }
 
 export type BillingScope = 'user' | 'org'
+
+// Phase 9 — recruiter co-pilot follow-up answer.
+export interface FollowupResponse {
+  answer: string
+}

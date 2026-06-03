@@ -1,6 +1,7 @@
 import type {
   AssessmentReport,
   BillingStatus,
+  FollowupResponse,
   JDMatchResult,
   ScanListResponse,
   ScanResponse,
@@ -172,4 +173,23 @@ export async function openBillingPortal(
   }
   const data = (await res.json()) as { url: string }
   return data.url
+}
+
+// Phase 9 — recruiter co-pilot follow-up. Auth + Pro required server-side;
+// the UI shows an upgrade CTA before ever calling this so most non-Pro users
+// never hit a 402.
+export async function sendFollowup(
+  scanId: string,
+  question: string,
+  token: string,
+): Promise<FollowupResponse> {
+  const res = await fetch(`${API_BASE}/assessment/followup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ scan_id: scanId, question }),
+  })
+  if (!res.ok) {
+    throw new Error(await errorDetail(res))
+  }
+  return res.json()
 }
