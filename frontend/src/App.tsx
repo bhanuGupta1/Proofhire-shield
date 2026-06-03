@@ -33,7 +33,13 @@ const TABS: { id: Tab; label: string }[] = [
 
 
 function AppContent() {
-  const { getToken, isSignedIn } = useAuth()
+  const { getToken, isSignedIn, orgId, orgRole } = useAuth()
+  // Phase 8.7 — orgRole comes from the Clerk session for the active org and
+  // gates the "Upgrade Firm" button. "org:admin" is Clerk's canonical admin
+  // role; we accept either that or a plain "admin" for forward-compat.
+  const isOrgAdmin =
+    Boolean(orgId) && (orgRole === 'org:admin' || orgRole === 'admin')
+
   const [result, setResult] = useState<ScanResult | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
@@ -66,7 +72,7 @@ function AppContent() {
     void refreshBilling()
   }, [isSignedIn])
 
-  async function handleCheckout() {
+  async function handleCheckout(scope: 'user' | 'org' = 'user') {
     setCheckoutBusy(true)
     setCheckoutError(null)
     try {
@@ -75,7 +81,7 @@ function AppContent() {
         setCheckoutError('Please sign in to upgrade.')
         return
       }
-      window.location.href = await startCheckout(token)
+      window.location.href = await startCheckout(token, scope)
     } catch (e) {
       setCheckoutError((e as Error).message)
     } finally {
@@ -83,11 +89,11 @@ function AppContent() {
     }
   }
 
-  async function handleManage() {
+  async function handleManage(scope: 'user' | 'org' = 'user') {
     try {
       const token = await getToken()
       if (!token) return
-      window.location.href = await openBillingPortal(token)
+      window.location.href = await openBillingPortal(token, scope)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -171,8 +177,11 @@ function AppContent() {
           <div className="space-y-4">
             <QuotaMeter
               status={billing}
+              isOrgAdmin={isOrgAdmin}
+              hasActiveOrg={Boolean(orgId)}
               onUpgrade={() => setPricingOpen(true)}
-              onManage={handleManage}
+              onManage={() => handleManage('user')}
+              onManageOrg={() => handleManage('org')}
             />
             <HistoryView refreshKey={historyKey} onSelect={handleSelectScan} />
           </div>
@@ -227,7 +236,10 @@ function AppContent() {
           setPricingOpen(false)
           setCheckoutError(null)
         }}
-        onUpgrade={handleCheckout}
+        onUpgrade={() => handleCheckout('user')}
+        onUpgradeOrg={() => handleCheckout('org')}
+        isOrgAdmin={isOrgAdmin}
+        hasActiveOrg={Boolean(orgId)}
         busy={checkoutBusy}
         error={checkoutError}
       />

@@ -94,4 +94,10 @@ export interface BillingStatus {
   scan_limit: number
   current_period_end: string | null
   status: string | null
+  // Phase 8.3 — true when the caller's Pro comes from the active org's sub,
+  // not from a personal subscription. Drives the "managed by admin" UI for
+  // non-admin org members.
+  via_org?: boolean
 }
+
+export type BillingScope = 'user' | 'org'

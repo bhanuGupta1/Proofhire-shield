@@ -134,8 +134,16 @@ export async function getBillingStatus(token: string): Promise<BillingStatus> {
 
 // POST endpoints require a Content-Length header (server middleware), so we send
 // an empty JSON body. Both return a Stripe-hosted URL the caller redirects to.
-export async function startCheckout(token: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/billing/checkout-session`, {
+// Phase 8.4 — scope='org' routes Checkout / Portal at the OrganizationSubscription
+// table (admin-only on the server side; viewers get 403).
+export async function startCheckout(
+  token: string,
+  scope: 'user' | 'org' = 'user',
+): Promise<string> {
+  const url = scope === 'org'
+    ? `${API_BASE}/billing/checkout-session?scope=org`
+    : `${API_BASE}/billing/checkout-session`
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...bearer(token) },
     body: '{}',
@@ -147,8 +155,14 @@ export async function startCheckout(token: string): Promise<string> {
   return data.url
 }
 
-export async function openBillingPortal(token: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/billing/portal`, {
+export async function openBillingPortal(
+  token: string,
+  scope: 'user' | 'org' = 'user',
+): Promise<string> {
+  const url = scope === 'org'
+    ? `${API_BASE}/billing/portal?scope=org`
+    : `${API_BASE}/billing/portal`
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...bearer(token) },
     body: '{}',
