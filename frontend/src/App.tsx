@@ -260,10 +260,62 @@ function AppContent() {
               </div>
             </div>
 
+            {/* How it works — 3-step flow */}
+            <div
+              className="rounded-2xl border border-gray-100 bg-white/60 px-6 py-7 shadow-sm backdrop-blur-sm animate-fade-in-up"
+              style={{ animationDelay: '420ms' }}
+            >
+              <p className="mb-5 text-center text-xs font-semibold uppercase tracking-wider text-gray-400">
+                How it works
+              </p>
+              <ol className="grid grid-cols-1 gap-6 sm:grid-cols-3 sm:gap-4">
+                {[
+                  {
+                    n: '01',
+                    title: 'Upload',
+                    body: 'Drop a CV — PDF, DOCX, or TXT, up to 10 MB. Anonymous works for a quick look; sign in to keep history.',
+                    accent: 'from-blue-500 to-blue-700',
+                  },
+                  {
+                    n: '02',
+                    title: 'Analyze',
+                    body: 'Zero-LLM threat detection plus skills extraction, experience-tier classification, and JD match — all in under a second.',
+                    accent: 'from-indigo-500 to-indigo-700',
+                  },
+                  {
+                    n: '03',
+                    title: 'Decide',
+                    body: 'Read a Trust Report PDF, or upgrade to Pro for a structured AI assessment with interview probes you can paste into your ATS.',
+                    accent: 'from-purple-500 to-purple-700',
+                  },
+                ].map((s, i) => (
+                  <li key={s.n} className="relative">
+                    <div className="flex items-start gap-3">
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${s.accent} text-xs font-bold tracking-wider text-white shadow-sm`}>
+                        {s.n}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900">{s.title}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-gray-500">{s.body}</p>
+                      </div>
+                    </div>
+                    {/* Connector arrow on desktop only, between the steps. */}
+                    {i < 2 && (
+                      <div className="pointer-events-none absolute right-0 top-4 hidden translate-x-1/2 sm:block">
+                        <svg className="h-4 w-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+                        </svg>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+
             {/* Upload CTA */}
             <div
               className="animate-fade-in-up"
-              style={{ animationDelay: '420ms' }}
+              style={{ animationDelay: '480ms' }}
             >
               <FileUpload onFile={handleFile} loading={loading} />
             </div>
@@ -368,6 +420,26 @@ function AppContent() {
         busy={checkoutBusy}
         error={checkoutError}
       />
+
+      <footer className="mt-8 border-t border-gray-200/60 bg-white/40 py-6 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-2 px-6 text-xs text-gray-400 sm:flex-row">
+          <div className="flex items-center gap-2">
+            <div className="flex h-5 w-5 items-center justify-center rounded-md bg-gradient-to-br from-blue-500 to-blue-700">
+              <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/>
+              </svg>
+            </div>
+            <span className="font-medium text-gray-500">ProofHire Shield</span>
+            <span>·</span>
+            <span>Candidate intelligence — secure by design</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span>Phase 8 · 385 tests</span>
+            <span className="hidden sm:inline">·</span>
+            <span className="hidden sm:inline">Zero-cost stack</span>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }
