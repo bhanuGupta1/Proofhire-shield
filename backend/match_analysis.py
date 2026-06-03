@@ -188,12 +188,78 @@ _EDU_ABBREV = {
 }
 
 
+# Phase 9 v2 — section-scoped education detection.
+#
+# Without scoping, a Bachelor's CV that mentions "MSc" anywhere (a project
+# description, a course list, a supervisor's title, a research programme) gets
+# silently inflated to Master's because the highest-rank-wins resolver doesn't
+# care WHERE the keyword lived. Restricting the scan to a clearly-headed
+# Education section makes that noise invisible. CVs WITHOUT a clear Education
+# header still get the whole-text scan as a fallback.
+
+_EDU_SECTION_HEADER_RE = re.compile(
+    r"^\s*(?:education(?:al)?(?:\s+(?:background|history|qualifications?))?|"
+    r"academic(?:\s+(?:background|history|qualifications?))?|"
+    r"qualifications?)"
+    r"\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
+
+# Headers that close the Education section if encountered after it.
+_NON_EDU_SECTION_HEADER_RE = re.compile(
+    r"^\s*(?:experience|work\s+experience|employment(?:\s+history)?|"
+    r"professional\s+experience|career(?:\s+history)?|"
+    r"skills|technical\s+skills|core\s+competen(?:ce|cies)|"
+    r"projects|portfolio|certifications?|publications?|"
+    r"awards|honou?rs|references?|languages|hobbies|interests?|"
+    r"summary|profile|objective|about(?:\s+me)?|contact|"
+    r"achievements?|volunteer(?:ing)?|extra-?curricular)"
+    r"\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _find_education_section(text: str) -> str | None:
+    """Return the text of the candidate's Education section, or None if no
+    clear heading is detected. Caller falls back to whole-text scanning.
+
+    Strategy: scan line-by-line for a line that's just an Education-style
+    heading (optionally with a trailing colon / dash); take subsequent
+    lines until the next major non-Education section header (or 60 lines,
+    whichever first). 60 is a soft cap so a CV with a permissive
+    "Education" heading and no other clear headers doesn't accidentally
+    swallow the whole document."""
+    lines = text.splitlines()
+    start_idx: int | None = None
+    for i, line in enumerate(lines):
+        if _EDU_SECTION_HEADER_RE.match(line.strip()):
+            start_idx = i + 1
+            break
+    if start_idx is None:
+        return None
+    end_idx = min(start_idx + 60, len(lines))
+    for j in range(start_idx, end_idx):
+        if _NON_EDU_SECTION_HEADER_RE.match(lines[j].strip()):
+            end_idx = j
+            break
+    section_text = "\n".join(lines[start_idx:end_idx]).strip()
+    return section_text or None
+
+
 def _detect_education(text: str) -> str:
-    """Return highest education level found, or 'Not specified'."""
+    """Return highest education level found, or 'Not specified'.
+
+    Prefers scanning ONLY the Education section when a clear header
+    exists, so a "MSc" mention buried in a project description or
+    course list can't inflate a Bachelor's CV to Master's. Falls back
+    to whole-CV scan when no Education header is detected (zero
+    structure → best we can do with regex)."""
+    section_text = _find_education_section(text)
+    scan_text = section_text if section_text is not None else text
     best_label = "Not specified"
     best_rank = 0
     for pat, label in _EDU_PATTERNS:
-        if pat.search(text):
+        if pat.search(scan_text):
             if _EDU_RANK[label] > best_rank:
                 best_rank = _EDU_RANK[label]
                 best_label = label

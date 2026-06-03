@@ -224,6 +224,101 @@ def test_punctuated_as_still_matches_associates():
     assert _detect_education("A.S. in Information Technology, community college.") == "Associate's"
 
 
+# ── Phase 9 v2 — section-scoped education detection ─────────────────────────
+# The dot-fix above closed the bare-"MS" false positive. But a Bachelor's CV
+# that mentions "MSc" anywhere (a project description, course list,
+# supervisor's title) was still being inflated to Master's because the
+# regex matched the keyword wherever it appeared. Scoping the scan to a
+# clearly-headed Education section makes that noise invisible.
+
+def test_bachelors_cv_with_msc_in_projects_stays_bachelors():
+    """The actual user-reported bug. CV has BSc in the Education section
+    and MSc mentioned in a Projects/Experience block. Section-scoped
+    detection ignores the project mention."""
+    cv = (
+        "Bhanu Gupta\n"
+        "React / Next.js engineer\n"
+        "\n"
+        "Education\n"
+        "BSc Computer Science, Anna University, 2022\n"
+        "\n"
+        "Projects\n"
+        "ProofHire Shield. Supervised by an MSc graduate from IIT Madras.\n"
+        "Built a course platform that hosts MSc-level lectures.\n"
+    )
+    assert _detect_education(cv) == "Bachelor's"
+
+
+def test_bachelors_cv_with_msc_decoration_anywhere_stays_bachelors():
+    """Another variant — MSc keyword appearing in Skills / Experience
+    sections should not override an Education-section BSc."""
+    cv = (
+        "Education\n"
+        "BSc Mathematics, University of Manchester, 2019\n"
+        "\n"
+        "Experience\n"
+        "Mentored MSc dissertation students at LSE.\n"
+    )
+    assert _detect_education(cv) == "Bachelor's"
+
+
+def test_real_masters_cv_still_detected_as_masters():
+    """Section-scoped detection must not regress real Master's CVs —
+    when the MSc is INSIDE the Education section it still wins."""
+    cv = (
+        "Education\n"
+        "MSc Machine Learning, Imperial College London, 2024\n"
+        "BSc Computer Science, University of Manchester, 2022\n"
+        "\n"
+        "Experience\n"
+        "Worked on production React applications.\n"
+    )
+    assert _detect_education(cv) == "Master's"
+
+
+def test_no_education_header_falls_back_to_whole_text():
+    """CVs without a clear Education heading still get the whole-text
+    scan (best effort). The dot-tightened regex from the earlier fix
+    keeps the obvious false positives away."""
+    cv = "I have a BSc in Computer Science from MIT and 5 years of experience."
+    assert _detect_education(cv) == "Bachelor's"
+
+
+def test_education_section_with_colon_header_detected():
+    """Common variant: 'Education:' on its own line as a header."""
+    cv = (
+        "Education:\n"
+        "BSc Computer Science, Stanford, 2020\n"
+        "\n"
+        "Experience:\n"
+        "Worked with MSc grads on ML platform.\n"
+    )
+    assert _detect_education(cv) == "Bachelor's"
+
+
+def test_qualifications_synonym_recognised_as_education():
+    """British CVs often use 'Qualifications' instead of 'Education'."""
+    cv = (
+        "Qualifications\n"
+        "BSc Computer Science, University of Birmingham, 2021\n"
+        "\n"
+        "Experience\n"
+        "Built scalable systems for MSc-level coursework.\n"
+    )
+    assert _detect_education(cv) == "Bachelor's"
+
+
+def test_academic_background_synonym_recognised():
+    cv = (
+        "Academic Background\n"
+        "PhD Computer Science, ETH Zurich, 2025\n"
+        "\n"
+        "Experience\n"
+        "Wrote dissertations on MSc theses.\n"
+    )
+    assert _detect_education(cv) == "PhD"
+
+
 # ── Interview probes ─────────────────────────────────────────────────────────────
 
 def test_probes_generated():
