@@ -144,3 +144,17 @@ class BillingStatusResponse(BaseModel):
     current_period_end: str | None = None  # ISO 8601 — when the Pro period renews/ends
     status: str | None = None  # raw Stripe subscription status, for display
     via_org: bool = False  # Phase 8.3 — Pro inherited from the active org's subscription
+
+
+class FollowupRequest(BaseModel):
+    """Phase 9 — body for /assessment/followup. The scan to query is
+    identified by `scan_id`; we NEVER trust signals or CV text from the
+    client. `assessment_id` is reserved for a later "answer in the context
+    of a specific assessment" mode and is unused in 9.1/9.2."""
+    scan_id: uuid.UUID
+    question: str = Field(min_length=1, max_length=500)
+    assessment_id: uuid.UUID | None = None
+
+
+class FollowupResponse(BaseModel):
+    answer: str

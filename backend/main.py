@@ -24,6 +24,8 @@ from models import (
     BillingRedirectResponse,
     BillingStatusResponse,
     CompletenessResultModel,
+    FollowupRequest,
+    FollowupResponse,
     JDMatchRequest,
     JDMatchResultModel,
     MatchAnalysisModel,
@@ -34,7 +36,11 @@ from models import (
 )
 from dataclasses import asdict
 from jd_match import match_cv_to_jd
-from assessment import AssessmentError, generate_assessment_report
+from assessment import (
+    AssessmentError,
+    generate_assessment_report,
+    generate_followup_answer,
+)
 from scanner import compute_risk, scan_text
 from safe_copy import generate_safe_copy
 from trust_report import build_trust_report
@@ -685,6 +691,97 @@ def assessment_endpoint(
         overall_score=report.overall_score,
         next_steps=report.next_steps,
     )
+
+
+# ── Phase 9 — recruiter co-pilot follow-up ──────────────────────────────────
+# A separate, stricter rate limit than the route's identity-tier default —
+# follow-ups are conversational and a runaway loop would burn LLM budget fast.
+_FOLLOWUP_PER_MIN = 5
+
+
+@app.post("/assessment/followup", response_model=FollowupResponse)
+def assessment_followup_endpoint(
+    req: FollowupRequest,
+    request: Request,
+    db: Session | None = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+    current_org: str | None = Depends(get_current_org_optional),
+) -> FollowupResponse:
+    """Plain-prose follow-up answer to one question about a saved scan.
+
+    Auth REQUIRED (anonymous → 401/503 from the dep). Pro REQUIRED — the
+    answer is grounded in the candidate's signals + safe-copy CV, both
+    loaded SERVER-side from the scan row by `scan_id`. The question text
+    is the ONLY user-supplied content; signals and CV are never accepted
+    from the body. Rate-limited to 5/min per user — follow-ups are
+    conversational and a loop would burn upstream tokens.
+
+    404 when the scan_id is unknown OR belongs to a different user / org
+    (Phase 5 + 8.3 scope) — same "never leak existence" pattern as
+    `/assessment` scan_id and `/scans/{id}`.
+    """
+    _push_request_context(user_id=current_user, org_id=current_org or "")
+
+    # Per-user 5/min cap. The default /assessment limit (free=100 / pro=300)
+    # is too high for a chatty endpoint; we override with a tight bucket
+    # keyed by the verified Clerk user_id so dropping auth cannot rotate
+    # identities.
+    allowed, retry_after = check_rate(
+        "/assessment/followup",
+        f"user:{current_user}",
+        per_min=_FOLLOWUP_PER_MIN,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many follow-up questions. Please slow down.",
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database is not configured.")
+
+    if not is_pro_for(current_user, current_org, db):
+        raise HTTPException(
+            status_code=402,
+            detail="Follow-up questions require a Pro subscription.",
+        )
+
+    # Same scope as /assessment scan_id and /scans/{id}: caller's own scan
+    # OR (in an org context) a scan tagged with that org. Out-of-scope →
+    # 404, never 200 or 403.
+    q = db.query(Scan).filter(Scan.id == req.scan_id)
+    if current_org:
+        q = q.filter(or_(Scan.user_id == current_user, Scan.org_id == current_org))
+    else:
+        q = q.filter(Scan.user_id == current_user)
+    scan_row = q.first()
+    if scan_row is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+
+    # Build signals SERVER-side from the persisted row — never from req.
+    cv_safe_copy = scan_row.safe_copy_text
+    signals = {
+        "risk_level": scan_row.risk_level,
+        "risk_score": scan_row.risk_score,
+        "injection_count": len(scan_row.prompt_injection_findings or []),
+        "ai_text_likelihood": scan_row.ai_text_likelihood,
+        "match": scan_row.match_analysis,
+    }
+    # End the read txn before the slow LLM call so we don't pin a pooled
+    # connection while waiting on Anthropic / Groq.
+    db.commit()
+
+    try:
+        answer = generate_followup_answer(
+            question=req.question,
+            signals=signals,
+            cv_safe_copy=cv_safe_copy,
+        )
+    except AssessmentError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return FollowupResponse(answer=answer)
 
 
 @app.post("/billing/checkout-session", response_model=BillingRedirectResponse)

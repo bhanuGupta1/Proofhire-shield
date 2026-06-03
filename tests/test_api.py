@@ -2277,3 +2277,222 @@ def test_webhook_org_customer_collision_refused(client_with_db, db_session, monk
         .first()
     )
     assert owner.stripe_customer_id == "cus_shared"
+
+
+# ── Phase 9 — POST /assessment/followup ─────────────────────────────────────
+
+def _followup_body(scan_id, question="How strong is the AWS experience?"):
+    return {"scan_id": str(scan_id), "question": question}
+
+
+def test_followup_anonymous_returns_401_or_503():
+    """Auth required (the dep raises 401 with Clerk configured, 503 in test
+    env where it isn't)."""
+    r = client.post(
+        "/assessment/followup",
+        json=_followup_body("00000000-0000-0000-0000-000000000000"),
+    )
+    assert r.status_code in (401, 503)
+
+
+def test_followup_free_signed_in_returns_402(client_with_db_and_auth, db_session):
+    """Same Pro gate as /assessment — a signed-in non-Pro user gets 402."""
+    from conftest import TEST_USER_ID
+
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment/followup", json=_followup_body(scan.id)
+    )
+    assert r.status_code == 402
+    assert "Pro subscription" in r.json()["detail"]
+
+
+def test_followup_unknown_scan_id_returns_404(client_with_db_and_auth, db_session):
+    """Caller is Pro, but the scan id doesn't exist — 404 with no leak."""
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    r = client_with_db_and_auth.post(
+        "/assessment/followup",
+        json=_followup_body("00000000-0000-0000-0000-000000000000"),
+    )
+    assert r.status_code == 404
+
+
+def test_followup_other_users_scan_id_returns_404(
+    client_with_db_and_auth, db_session
+):
+    """IDOR check: a known scan owned by a DIFFERENT user returns 404, not
+    200 — never leak that the scan exists or what's in it."""
+    from conftest import OTHER_USER_ID, TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    foreign = _make_persisted_scan_for_user(db_session, OTHER_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment/followup", json=_followup_body(foreign.id)
+    )
+    assert r.status_code == 404
+
+
+def test_followup_other_org_scan_returns_404(client_with_db_auth_and_org, db_session):
+    """Same IDOR check for the Phase 5 org scope: a scan in a DIFFERENT org
+    returns 404 even for a Pro caller in an org."""
+    from conftest import OTHER_ORG_ID, OTHER_USER_ID, TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    foreign = _make_persisted_scan_for_user_org(
+        db_session, OTHER_USER_ID, OTHER_ORG_ID
+    )
+
+    r = client_with_db_auth_and_org.post(
+        "/assessment/followup", json=_followup_body(foreign.id)
+    )
+    assert r.status_code == 404
+
+
+def test_followup_org_colleague_scan_returns_200(
+    client_with_db_auth_and_org, db_session, monkeypatch
+):
+    """Org sharing: a Pro caller can ask a follow-up about a colleague's
+    scan tagged with the same org id."""
+    from conftest import OTHER_USER_ID, TEST_ORG_ID, TEST_USER_ID
+    import main as main_module
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    colleague_scan = _make_persisted_scan_for_user_org(
+        db_session, OTHER_USER_ID, TEST_ORG_ID
+    )
+    monkeypatch.setattr(
+        main_module,
+        "generate_followup_answer",
+        lambda **kw: "Sarah's AWS work is concrete — verify with the project owner.",
+    )
+
+    r = client_with_db_auth_and_org.post(
+        "/assessment/followup", json=_followup_body(colleague_scan.id)
+    )
+    assert r.status_code == 200
+    assert "Sarah" in r.json()["answer"]
+
+
+def test_followup_question_too_long_returns_422(client_with_db_and_auth, db_session):
+    """A 501-char question is rejected by the body validator before the LLM
+    is touched."""
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment/followup",
+        json={"scan_id": str(scan.id), "question": "x" * 501},
+    )
+    assert r.status_code == 422
+
+
+def test_followup_empty_question_returns_422(client_with_db_and_auth, db_session):
+    """A 0-char question is rejected — min_length=1."""
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    r = client_with_db_and_auth.post(
+        "/assessment/followup",
+        json={"scan_id": str(scan.id), "question": ""},
+    )
+    assert r.status_code == 422
+
+
+def test_followup_invalid_scan_id_returns_422(client_with_db_and_auth, db_session):
+    """A malformed UUID is rejected before the handler runs."""
+    from conftest import TEST_USER_ID
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    r = client_with_db_and_auth.post(
+        "/assessment/followup",
+        json={"scan_id": "not-a-uuid", "question": "ok"},
+    )
+    assert r.status_code == 422
+
+
+def test_followup_pro_happy_path_returns_answer(
+    client_with_db_and_auth, db_session, monkeypatch
+):
+    """Pro caller + valid own scan + mocked LLM → 200 with a non-empty answer.
+    Server-side signals are passed to the LLM helper; client-supplied signals
+    (if any) are NEVER forwarded — the body schema has no field for them."""
+    from conftest import TEST_USER_ID
+    import main as main_module
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+
+    captured = {}
+
+    def fake_followup(**kw):
+        captured.update(kw)
+        return "Sarah is strong on AWS but lacks Kubernetes evidence."
+
+    monkeypatch.setattr(main_module, "generate_followup_answer", fake_followup)
+
+    r = client_with_db_and_auth.post(
+        "/assessment/followup",
+        json={
+            "scan_id": str(scan.id),
+            "question": "How strong is the AWS experience?",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["answer"].startswith("Sarah is strong")
+
+    # The LLM helper was called with the recruiter's question verbatim AND
+    # with server-derived signals + safe_copy (not from the request body).
+    assert captured["question"] == "How strong is the AWS experience?"
+    assert "risk_level" in captured["signals"]
+    assert captured["cv_safe_copy"]  # non-empty
+
+
+def test_followup_rate_limit_fires_at_sixth_call(
+    client_with_db_and_auth, db_session, monkeypatch
+):
+    """5/min per-user cap — sixth call within the burst returns 429."""
+    from conftest import TEST_USER_ID
+    import main as main_module
+    from rate_limit import reset_for_tests
+
+    _make_user_pro(db_session, TEST_USER_ID)
+    scan = _make_persisted_scan_for_user(db_session, TEST_USER_ID)
+    monkeypatch.setattr(
+        main_module,
+        "generate_followup_answer",
+        lambda **kw: "ok.",
+    )
+    # The autouse conftest fixture already clears buckets, but be explicit
+    # so a future ordering change can't make this test flaky.
+    reset_for_tests()
+
+    statuses = []
+    for _ in range(6):
+        r = client_with_db_and_auth.post(
+            "/assessment/followup", json=_followup_body(scan.id)
+        )
+        statuses.append(r.status_code)
+
+    # First five succeed, sixth is 429.
+    assert statuses == [200, 200, 200, 200, 200, 429], f"statuses={statuses}"
+
+
+def test_followup_no_db_returns_503(client_with_auth_only):
+    """Auth configured but no DB → 503 (we can't look up the scan)."""
+    r = client_with_auth_only.post(
+        "/assessment/followup",
+        json={
+            "scan_id": "00000000-0000-0000-0000-000000000000",
+            "question": "ok",
+        },
+    )
+    assert r.status_code == 503
