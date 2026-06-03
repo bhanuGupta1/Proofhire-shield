@@ -2744,3 +2744,64 @@ def test_followup_no_db_returns_503(client_with_auth_only):
         },
     )
     assert r.status_code == 503
+
+
+# ── Phase 9.5 — Codex P9 LOW fix: pre-auth IP rate limit on /followup ────────
+
+def test_followup_preauth_ip_limit_fires_before_clerk_auth(monkeypatch):
+    """Anonymous flood on /assessment/followup is IP-rate-limited BEFORE
+    the Clerk auth dep runs. With ANON_PER_MIN monkeypatched down to 3,
+    the 4th unauthenticated call must return 429 (not the 401/503 it would
+    otherwise return from the auth dep)."""
+    import rate_limit
+    import main as main_module
+    from rate_limit import reset_for_tests
+
+    monkeypatch.setattr(rate_limit, "ANON_PER_MIN", 3)
+    monkeypatch.setattr(main_module, "ANON_PER_MIN", 3)
+    reset_for_tests()
+
+    body = {
+        "scan_id": "00000000-0000-0000-0000-000000000000",
+        "question": "ok",
+    }
+    statuses = []
+    for _ in range(4):
+        r = client.post("/assessment/followup", json=body)
+        statuses.append(r.status_code)
+
+    # First 3 reach the auth dep (401 in prod / 503 in this test env where
+    # Clerk isn't configured) — both are "not 429" for the limiter's
+    # purposes. The 4th call exhausts the IP bucket and returns 429.
+    assert all(s != 429 for s in statuses[:3]), f"early 429: {statuses}"
+    assert statuses[-1] == 429, f"final not 429: {statuses}"
+
+
+def test_followup_preauth_middleware_fires_on_malformed_body(monkeypatch):
+    """Codex P9 round-2 LOW — body parsing happens at dep resolution time
+    so a Depends()-based limit was bypassed by 422 floods. Middleware
+    runs above body parsing AND above the auth dep, so a forged request
+    (whether the failure is 422 from a malformed body or 503/401 from
+    the auth path in this Clerk-unconfigured test env) still consumes
+    the IP bucket. With ANON_PER_MIN=3 the 4th call returns 429."""
+    import rate_limit
+    import main as main_module
+    from rate_limit import reset_for_tests
+
+    monkeypatch.setattr(rate_limit, "ANON_PER_MIN", 3)
+    monkeypatch.setattr(main_module, "ANON_PER_MIN", 3)
+    reset_for_tests()
+
+    statuses = []
+    for _ in range(4):
+        r = client.post("/assessment/followup", json={"foo": "bar"})
+        statuses.append(r.status_code)
+
+    # First three are NOT 429 (the body / auth failure surfaces) but each
+    # consumes a token. The exact 4xx/5xx surfaced depends on which check
+    # FastAPI runs first in this env — what matters is the bucket was
+    # consumed before that check ran. Fourth call → 429.
+    assert all(s in (401, 422, 503) for s in statuses[:3]), (
+        f"unexpected pre-cap: {statuses}"
+    )
+    assert statuses[3] == 429, f"4th call not 429: {statuses}"

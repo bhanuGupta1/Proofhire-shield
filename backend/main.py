@@ -185,6 +185,37 @@ async def limit_body_size(request: Request, call_next):
 
 
 @app.middleware("http")
+async def followup_preauth_rate_middleware(request: Request, call_next):
+    """Phase 9.5 (Codex P9 round-2 LOW) — path-scoped IP rate limit on
+    /assessment/followup that fires BEFORE body parsing AND dep resolution.
+
+    The first P9 fix used a Depends() to rate-limit ahead of get_current_user,
+    but Pydantic body validation (`req: FollowupRequest`) ran before deps, so
+    a malformed-JSON flood returned 422 without ever touching the IP bucket.
+    Middleware runs above both, so a 422 from a forged body still consumes a
+    token and an anonymous flood is bounded.
+
+    Keeps the existing in-handler per-user 5/min bucket (separate identity
+    key `user:<sub>`, no cross-pollination with this anon `ip:<addr>` bucket).
+    """
+    if (
+        request.method == "POST"
+        and request.url.path == "/assessment/followup"
+    ):
+        identity = "ip:" + _client_ip(request)
+        allowed, retry_after = check_rate(
+            "/assessment/followup-preauth", identity, per_min=ANON_PER_MIN
+        )
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many requests. Please slow down."},
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
     """Phase 8.6 — every request gets a fresh request_id (or honours an inbound
     X-Request-Id from the client / upstream proxy). The id flows into the
