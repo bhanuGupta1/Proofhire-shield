@@ -15,6 +15,18 @@ from sqlalchemy.pool import StaticPool
 from db_models import Base
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_buckets():
+    """Phase 8.2 — clear the in-process rate-limiter state between tests so
+    one test's 30 anonymous calls don't 429 the next test's first call. The
+    limiter itself is exercised by dedicated tests."""
+    from rate_limit import reset_for_tests
+
+    reset_for_tests()
+    yield
+    reset_for_tests()
+
+
 @pytest.fixture
 def db_session():
     """In-memory SQLite session with the Phase-3 tables created.

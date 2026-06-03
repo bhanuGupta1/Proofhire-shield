@@ -48,6 +48,12 @@ from billing import (
     is_pro,
     quota_used_this_month,
 )
+from rate_limit import (
+    ANON_PER_MIN,
+    AUTH_FREE_PER_MIN,
+    AUTH_PRO_PER_MIN,
+    check_rate,
+)
 from stripe_billing import (
     BillingError,
     WebhookError,
@@ -109,6 +115,51 @@ async def limit_body_size(request: Request, call_next):
     return await call_next(request)
 
 
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate-limit keying. Trusts the leftmost
+    X-Forwarded-For on the HF Spaces + Cloudflare path (both layers attach
+    the original IP); behind any other proxy this needs review.
+
+    Returns a sentinel string when no IP is available rather than a real
+    address; the value is only ever used as a bucket key, never to bind."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_rate(
+    route: str,
+    request: Request,
+    current_user: str | None = None,
+    db: Session | None = None,
+) -> None:
+    """Phase 8.2 — token-bucket gate. 429 with Retry-After when exhausted.
+
+    Identity: authed callers by Clerk user_id (server-verified claim), anon
+    callers by client IP. Rate: anon < free < Pro. Pro recognition is
+    best-effort — if `db` is None or the lookup fails we treat the caller
+    as Free, which only narrows the bucket (never widens it).
+    """
+    if current_user is None:
+        identity = "ip:" + _client_ip(request)
+        per_min = ANON_PER_MIN
+    else:
+        identity = "user:" + current_user
+        per_min = (
+            AUTH_PRO_PER_MIN
+            if db is not None and is_pro(current_user, db)
+            else AUTH_FREE_PER_MIN
+        )
+    allowed, retry_after = check_rate(route, identity, per_min)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please try again shortly.",
+            headers={"Retry-After": str(int(retry_after) + 1)},
+        )
+
+
 _cors_raw = os.environ.get("CORS_ORIGINS", "http://localhost:5173")
 _CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 
@@ -127,11 +178,17 @@ def health() -> dict[str, str]:
 
 @app.post("/scan-cv", response_model=ScanResponse)
 async def scan_cv(
+    request: Request,
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
+    # Phase 8.2 — rate limit (anon=30/min, free=100/min, pro=300/min by identity)
+    # fires before the quota gate, so an abusive caller never even consumes
+    # their monthly bucket on rejected requests.
+    _enforce_rate("/scan-cv", request, current_user, db)
+
     # Phase 7.2 + 8.1 — free-tier quota gate, atomic via consume_or_refuse.
     # Anonymous (no current_user) is unmetered so the demo path keeps working;
     # DB-unconfigured deployments degrade open (Phase 4/5 backward-compat
@@ -276,19 +333,22 @@ async def scan_cv(
 
 @app.post("/trust-report")
 async def trust_report(
+    request: Request,
     file: UploadFile = File(...),
     db: Session | None = Depends(get_db),
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> Response:
     """Re-scan the CV and return a Trust Report PDF."""
-    # Pass db + current_user + current_org explicitly: when this endpoint calls
-    # scan_cv as a regular Python function the FastAPI Depends machinery does
-    # not fire, so the defaults would be the Depends marker rather than real
-    # values. Phase 7.7: persist=False was removed — /trust-report now writes
-    # the Scan row just like /scan-cv, so it counts toward the free-tier quota
-    # instead of being a back-door for unlimited PDF generation.
+    # Pass db + current_user + current_org + request explicitly: when this
+    # endpoint calls scan_cv as a regular Python function the FastAPI Depends
+    # machinery does not fire, so the defaults would be the Depends marker
+    # rather than real values. Phase 7.7: persist=False was removed so
+    # /trust-report counts toward the free-tier quota. Phase 8.2: scan_cv's
+    # rate-limit gate fires on the inner call too — /trust-report inherits
+    # the limiter via the shared scan_cv call.
     scan = await scan_cv(
+        request,
         file,
         db=db,
         current_user=current_user,
@@ -401,6 +461,7 @@ def match_jd(req: JDMatchRequest) -> JDMatchResultModel:
 @app.post("/assessment", response_model=AssessmentReportModel)
 def assessment_endpoint(
     req: AssessmentRequest,
+    request: Request,
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
     current_org: str | None = Depends(get_current_org_optional),
@@ -421,6 +482,11 @@ def assessment_endpoint(
       (per-user history requires scan_id).
     Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
+    # Phase 8.2 — rate limit (free=100/min, pro=300/min by user_id) ahead of
+    # the Pro gate so a Pro user under attack still gets fast 429 rejection
+    # before we pay any LLM cost on the upstream.
+    _enforce_rate("/assessment", request, current_user, db)
+
     # Phase 7.3 + 7.7 — Pro gate. Auth is now required (the dep raises 401/503
     # for anonymous callers before we get here), so the only remaining check is
     # the subscription state. DB-unconfigured deployments degrade open so
@@ -768,6 +834,9 @@ async def billing_webhook(
     secret or DB unconfigured (Stripe should retry)."""
     if db is None:
         raise HTTPException(status_code=503, detail="Database is not configured.")
+    # Phase 8.2 — per-IP rate limit on the unauthenticated surface so a
+    # bogus-signature flood gets 429'd before we read the body or run HMAC.
+    _enforce_rate("/billing/webhook", request)
     # Phase 7.7 LOW #1: a much smaller webhook-specific cap (256 KB) than the
     # global 10 MB upload cap. Stripe events are kilobytes; anything larger is
     # a forged flood and we short-circuit before doing HMAC work.
