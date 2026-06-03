@@ -166,6 +166,93 @@ def test_ai_likelihood_is_valid_enum():
     assert likelihood in ("LIKELY", "POSSIBLE", "UNLIKELY")
 
 
+# ── Phase 9 v4 — match_engine query param on /scan-cv ───────────────────────
+
+def test_scan_cv_match_engine_regex_skips_llm(monkeypatch):
+    """?match_engine=regex must skip the LLM call entirely and produce a
+    response whose match_analysis.match_engine == 'regex'."""
+    import cv_llm_extract
+
+    called = {"count": 0}
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: (called.__setitem__("count", called["count"] + 1), None)[1],
+    )
+
+    r = client.post(
+        "/scan-cv?match_engine=regex",
+        files={"file": ("cv.txt", (b"BSc CS. 3 years experience."), "text/plain")},
+    )
+    assert r.status_code == 200
+    body = r.json()["result"]
+    assert body["match_analysis"]["match_engine"] == "regex"
+    assert called["count"] == 0  # LLM never invoked
+
+
+def test_scan_cv_match_engine_llm_calls_llm(monkeypatch):
+    """?match_engine=llm goes through extract_cv_facts; when the mock
+    returns a value, the response carries match_engine='llm' so the UI
+    can show the AI badge."""
+    import cv_llm_extract
+
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: {"education_level": "PhD", "years_experience": 12},
+    )
+
+    r = client.post(
+        "/scan-cv?match_engine=llm",
+        files={"file": ("cv.txt", b"Just some text.", "text/plain")},
+    )
+    assert r.status_code == 200
+    body = r.json()["result"]
+    assert body["match_analysis"]["match_engine"] == "llm"
+    assert body["match_analysis"]["education_level"] == "PhD"
+
+
+def test_scan_cv_match_engine_default_is_llm(monkeypatch):
+    """Omitting the query param defaults to engine='llm'. When the LLM
+    returns nothing the response reflects engine='regex' (transparency)."""
+    import cv_llm_extract
+
+    called = {"count": 0}
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: (called.__setitem__("count", called["count"] + 1), None)[1],
+    )
+
+    r = client.post(
+        "/scan-cv",
+        files={"file": ("cv.txt", b"BSc CS. 5 years experience.", "text/plain")},
+    )
+    assert r.status_code == 200
+    assert called["count"] == 1  # LLM was attempted
+    assert r.json()["result"]["match_analysis"]["match_engine"] == "regex"
+
+
+def test_scan_cv_match_engine_invalid_value_falls_back_to_regex(monkeypatch):
+    """Unknown engine values default to regex without crashing the request."""
+    import cv_llm_extract
+
+    called = {"count": 0}
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: (called.__setitem__("count", called["count"] + 1), None)[1],
+    )
+
+    r = client.post(
+        "/scan-cv?match_engine=banana",
+        files={"file": ("cv.txt", b"BSc CS.", "text/plain")},
+    )
+    assert r.status_code == 200
+    assert called["count"] == 0
+    assert r.json()["result"]["match_analysis"]["match_engine"] == "regex"
+
+
 # ── Trust report endpoint ─────────────────────────────────────────────────────
 
 def test_trust_report_returns_pdf():

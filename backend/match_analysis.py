@@ -552,6 +552,12 @@ class MatchAnalysis:
     summary: str
     completeness: CompletenessResult
     red_flags: list[str]
+    # Phase 9 v4 — which engine actually produced the education / tier
+    # values, so the UI can show a badge and the recruiter knows whether
+    # they got the fast deterministic path or the context-aware AI path.
+    # "regex" means the LLM was skipped or unavailable; "llm" means an
+    # LLM successfully returned and refined the values.
+    match_engine: str = "regex"
 
 
 def _years_to_tier(years: int | None) -> str:
@@ -571,44 +577,60 @@ def _years_to_tier(years: int | None) -> str:
     return "Entry"
 
 
-def analyze_match(text: str) -> MatchAnalysis:
+def analyze_match(text: str, *, engine: str = "llm") -> MatchAnalysis:
     """Run all heuristics and return a MatchAnalysis.
 
-    Phase 9 v3 — when an LLM provider is configured (GROQ_API_KEY or
-    ANTHROPIC_API_KEY), the regex's education_level and years_experience
-    are overridden by an LLM extraction pass that reads the CV with
-    context. The LLM ignores decorative degree mentions outside the
-    candidate's own education ("MSc dissertation supervisor",
-    "MSc-level coursework", "taught a Bachelor's programme"). Any LLM
-    failure mode — no key, network error, parse failure, invalid level
-    — silently falls back to the regex result, so deployments without
-    an LLM keep the existing behaviour.
+    Phase 9 v4 — caller picks the match engine:
+
+    - `engine="regex"` (fast, deterministic, on-device) — runs ONLY the
+      regex paths. Microseconds per scan, no LLM call. The trade-off is
+      that decorative keyword mentions ("MSc dissertation supervisor",
+      "MSc-level coursework", "taught a Bachelor's programme") can land
+      in the wrong bucket on unusual CV layouts, because the regex has
+      no notion of "the candidate themselves vs someone else".
+
+    - `engine="llm"` (default, context-aware) — runs the regex first,
+      then asks an LLM (Groq → Anthropic) to read the CV with context
+      and override the education_level + years_experience when it has
+      a confident answer. ~600-1500 ms per scan. Failure modes (no API
+      key, network error, parse failure, invalid level) silently fall
+      back to the regex result, so deployments without an LLM still
+      get sensible output and the per-scan latency stays bounded.
+
+    The `MatchAnalysis.match_engine` field on the returned object tells
+    the caller which engine ACTUALLY produced the values — `"llm"` only
+    when the LLM successfully refined them; `"regex"` for the regex path
+    OR for an `engine="llm"` request whose LLM call ended up falling
+    back. The recruiter UI uses this to render a "AI / Fast" badge.
     """
     skills = _extract_skills(text)
     tier, years = _compute_experience_tier(text)
     education = _detect_education(text)
 
-    # Best-effort LLM refinement. Returns None when no provider is
-    # configured, which keeps existing tests (no API key in test env)
-    # on the regex path.
-    try:
-        from cv_llm_extract import extract_cv_facts
+    used_engine = "regex"
+    if engine == "llm":
+        # Best-effort LLM refinement. Returns None when no provider is
+        # configured (tests, dev deploys without keys), which silently
+        # falls back to the regex result above.
+        try:
+            from cv_llm_extract import extract_cv_facts
 
-        llm_facts = extract_cv_facts(text)
-    except Exception:
-        llm_facts = None
-    if llm_facts:
-        llm_level = llm_facts.get("education_level")
-        llm_years = llm_facts.get("years_experience")
-        if llm_level:
-            education = llm_level
-        if llm_years is not None:
-            years = llm_years
-            # Recompute tier from the refined years figure. Drop the
-            # seniority-keyword blend (which inflated "Senior" CVs with
-            # no years) — the LLM already saw the same text and gave us
-            # the canonical years count.
-            tier = _years_to_tier(llm_years)
+            llm_facts = extract_cv_facts(text)
+        except Exception:
+            llm_facts = None
+        if llm_facts:
+            llm_level = llm_facts.get("education_level")
+            llm_years = llm_facts.get("years_experience")
+            if llm_level:
+                education = llm_level
+            if llm_years is not None:
+                years = llm_years
+                # Recompute tier from the refined years figure. Drop the
+                # seniority-keyword blend (which inflated "Senior" CVs
+                # with no years) — the LLM already saw the same text
+                # and gave us the canonical years count.
+                tier = _years_to_tier(llm_years)
+            used_engine = "llm"
 
     probes = _generate_probes(skills, tier)
     claims = _extract_key_claims(text)
@@ -628,4 +650,5 @@ def analyze_match(text: str) -> MatchAnalysis:
         summary=summary,
         completeness=completeness,
         red_flags=red_flags,
+        match_engine=used_engine,
     )

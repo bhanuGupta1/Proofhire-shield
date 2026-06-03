@@ -33,6 +33,12 @@ class MatchAnalysisModel(BaseModel):
     summary: str
     completeness: CompletenessResultModel
     red_flags: list[str]
+    # Phase 9 v4 — which engine actually produced the education / tier
+    # values, so the recruiter UI can render a "AI" / "Fast" badge.
+    # "regex" = deterministic / on-device path; "llm" = LLM successfully
+    # refined the values. Defaults to "regex" so older clients reading
+    # the field without explicitly handling it default to the safe value.
+    match_engine: str = "regex"
 
 
 class JDMatchResultModel(BaseModel):

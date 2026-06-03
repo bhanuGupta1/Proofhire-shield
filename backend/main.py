@@ -303,6 +303,7 @@ async def scan_cv(
     db: Session | None = Depends(get_db),
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
+    match_engine: str = "llm",
 ) -> ScanResponse:
     # Phase 8.6 — push the resolved identity into the log context so every
     # log line under this request carries user/org alongside the request_id.
@@ -385,7 +386,14 @@ async def scan_cv(
         ai_label = "UNLIKELY"
 
     safe_copy = generate_safe_copy(text, injection, pii)
-    match = analyze_match(text)
+    # Phase 9 v4 — caller picks the match-analysis engine. "llm" runs the
+    # regex + an LLM refinement pass (Groq → Anthropic; falls back to
+    # regex when no provider or any failure). "regex" skips the LLM
+    # entirely — fast + deterministic + no upstream dependency, at the
+    # cost of being fooled by decorative degree mentions on unusual CV
+    # layouts. Anything else falls through to regex (safe default).
+    requested_engine = match_engine if match_engine in ("regex", "llm") else "regex"
+    match = analyze_match(text, engine=requested_engine)
 
     summary_parts = []
     if injection:
@@ -424,6 +432,7 @@ async def scan_cv(
                 breakdown=match.completeness.breakdown,
             ),
             red_flags=match.red_flags,
+            match_engine=match.match_engine,
         ),
     )
 

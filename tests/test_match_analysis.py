@@ -432,6 +432,89 @@ def test_analyze_match_swallows_llm_exception(monkeypatch):
     assert result.experience_tier == "Mid-level"
 
 
+# ── Phase 9 v4 — engine="regex" vs engine="llm" toggle ──────────────────────
+
+def test_analyze_match_regex_engine_skips_llm_entirely(monkeypatch):
+    """engine='regex' must not call the LLM extractor at all — the call site
+    has to short-circuit, not just ignore the result. We assert by raising
+    inside the mock; if anything reaches the LLM, the test would error."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    called = {"count": 0}
+
+    def _wont_be_called(*a, **kw):
+        called["count"] += 1
+        return {"education_level": "PhD", "years_experience": 30}
+
+    monkeypatch.setattr(cv_llm_extract, "extract_cv_facts", _wont_be_called)
+
+    cv = "BSc in CS. Senior Engineer. 8 years experience."
+    result = analyze_match(cv, engine="regex")
+
+    assert called["count"] == 0, "LLM was called under engine='regex'"
+    assert result.education_level == "Bachelor's"  # regex result
+    assert result.experience_tier == "Senior"  # regex result
+    assert result.match_engine == "regex"  # reflects actual engine used
+
+
+def test_analyze_match_llm_engine_marks_response_as_llm(monkeypatch):
+    """When engine='llm' AND the LLM actually returns a result, the
+    response's match_engine field is 'llm' so the UI can show an AI badge."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(
+        cv_llm_extract,
+        "extract_cv_facts",
+        lambda *a, **kw: {
+            "education_level": "Bachelor's",
+            "years_experience": 2,
+        },
+    )
+
+    result = analyze_match("anything", engine="llm")
+    assert result.match_engine == "llm"
+
+
+def test_analyze_match_llm_engine_falls_back_to_regex_label_on_llm_failure(monkeypatch):
+    """When engine='llm' is requested but the LLM returns None (no key,
+    parse error, etc.), the response's match_engine must reflect what
+    ACTUALLY happened ('regex'), not what was requested ('llm') —
+    transparency so the UI doesn't lie about an AI badge."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    monkeypatch.setattr(cv_llm_extract, "extract_cv_facts", lambda *a, **kw: None)
+
+    result = analyze_match("BSc CS, 5 years.", engine="llm")
+    assert result.match_engine == "regex"
+    assert result.education_level == "Bachelor's"
+    assert result.years_experience == 5
+
+
+def test_analyze_match_unknown_engine_value_does_not_crash(monkeypatch):
+    """Defensive: an unrecognised engine string (e.g. from a malicious or
+    older client) defaults to NOT calling the LLM. Better to fall through
+    to the regex than to silently call the LLM on misconfigured input."""
+    import cv_llm_extract
+    from match_analysis import analyze_match
+
+    called = {"count": 0}
+
+    def _wont_be_called(*a, **kw):
+        called["count"] += 1
+        return None
+
+    monkeypatch.setattr(cv_llm_extract, "extract_cv_facts", _wont_be_called)
+
+    result = analyze_match("BSc CS, 3 years.", engine="banana")
+    # No exception, regex path taken, LLM untouched.
+    assert called["count"] == 0
+    assert result.education_level == "Bachelor's"
+    assert result.match_engine == "regex"
+
+
 # ── Interview probes ─────────────────────────────────────────────────────────────
 
 def test_probes_generated():
