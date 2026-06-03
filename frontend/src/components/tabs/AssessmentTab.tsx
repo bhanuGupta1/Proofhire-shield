@@ -174,4 +174,31 @@ export function AssessmentTab({ result, billing, onUpgrade }: Props) {
         </h3>
         <ol className="space-y-2">
           {report.next_steps.map((s, i) => (
-            <li key={i} className="flex gap-3 text-sm text-blu
+            <li key={i} className="flex gap-3 text-sm text-blue-900">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">
+                {i + 1}
+              </span>
+              <span>{s}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      {/* Framework label + regenerate */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs italic text-gray-400">
+          Framework: {report.framework}. Heuristic + LLM-assisted — verify all claims with the candidate.
+        </p>
+        <button
+          onClick={() => {
+            setReport(null)
+            setError(null)
+          }}
+          className="text-xs text-blue-600 hover:underline"
+        >
+          &lsaquo; Generate a different assessment
+        </button>
+      </div>
+    </div>
+  )
+}
