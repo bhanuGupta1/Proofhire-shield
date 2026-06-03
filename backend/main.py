@@ -7,6 +7,7 @@ import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
@@ -77,7 +78,53 @@ from stripe_billing import (
 )
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+
+
+# Phase 8.6 — request-scoped logging context. A middleware sets a fresh
+# request_id on every inbound request; routes may push user_id / org_id once
+# the Clerk deps resolve. The filter below copies whatever is in the context
+# onto each LogRecord, so every warning / exception line emitted under a
+# request automatically carries its correlation id.
+_request_ctx: ContextVar[dict[str, str]] = ContextVar("_request_ctx", default={})
+
+
+def _push_request_context(**fields: str) -> None:
+    """Add/update keys on the current request's logging context.
+
+    Endpoints call this once the Clerk deps have resolved so subsequent
+    `logger.warning(...)` lines under the same request carry user/org info."""
+    ctx = dict(_request_ctx.get())
+    for k, v in fields.items():
+        if v:
+            ctx[k] = v
+    _request_ctx.set(ctx)
+
+
+class _RequestContextFilter(logging.Filter):
+    """Inject request_id / user_id / org_id onto every LogRecord."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 (logging API)
+        ctx = _request_ctx.get()
+        record.request_id = ctx.get("request_id", "-")
+        record.user_id = ctx.get("user_id", "-")
+        record.org_id = ctx.get("org_id", "-")
+        return True
+
+
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.INFO,
+    format=(
+        "%(asctime)s %(levelname)s %(name)s "
+        "rid=%(request_id)s user=%(user_id)s org=%(org_id)s | %(message)s"
+    ),
+)
+# The filter has to live on a handler, not on a logger — a Logger.addFilter
+# only fires for records emitted THROUGH that logger directly; records that
+# propagate up from a child logger bypass it. Handler filters always run.
+_REQUEST_CTX_FILTER = _RequestContextFilter()
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_REQUEST_CTX_FILTER)
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 _MAX_PERSISTED_TEXT_CHARS = 64 * 1024  # 64 KB cap on text fields written to DB
@@ -126,6 +173,26 @@ async def limit_body_size(request: Request, call_next):
         except ValueError:
             return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length."})
     return await call_next(request)
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Phase 8.6 — every request gets a fresh request_id (or honours an inbound
+    X-Request-Id from the client / upstream proxy). The id flows into the
+    logging context and is echoed back in the response header so log lines and
+    the response can be correlated.
+
+    Declared LAST so it's the OUTERMOST middleware (Starlette/FastAPI applies
+    decorators bottom-up): it must set the context-var before limit_body_size
+    can produce its 411/413 response, and it must inject the X-Request-Id
+    header onto every response, including the 411/413 ones."""
+    inbound = request.headers.get("x-request-id", "").strip()
+    # Cap inbound to 64 chars so a hostile client can't blow up the log lines.
+    rid = inbound[:64] if inbound else uuid.uuid4().hex
+    _request_ctx.set({"request_id": rid})
+    response = await call_next(request)
+    response.headers["x-request-id"] = rid
+    return response
 
 
 def _client_ip(request: Request) -> str:
@@ -197,6 +264,10 @@ async def scan_cv(
     current_user: str | None = Depends(get_current_user_optional),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> ScanResponse:
+    # Phase 8.6 — push the resolved identity into the log context so every
+    # log line under this request carries user/org alongside the request_id.
+    _push_request_context(user_id=current_user or "", org_id=current_org or "")
+
     # Phase 8.2 — rate limit (anon=30/min, free=100/min, pro=300/min by identity)
     # fires before the quota gate, so an abusive caller never even consumes
     # their monthly bucket on rejected requests.
@@ -500,6 +571,9 @@ def assessment_endpoint(
       (per-user history requires scan_id).
     Requires ANTHROPIC_API_KEY or GROQ_API_KEY on the server; returns 503 otherwise.
     """
+    # Phase 8.6 — push identity into the log context.
+    _push_request_context(user_id=current_user, org_id=current_org or "")
+
     # Phase 8.2 — rate limit (free=100/min, pro=300/min by user_id) ahead of
     # the Pro gate so a Pro user under attack still gets fast 429 rejection
     # before we pay any LLM cost on the upstream.
