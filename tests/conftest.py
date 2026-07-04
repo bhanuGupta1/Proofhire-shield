@@ -59,8 +59,12 @@ def client_with_db(db_session):
     session from `db_session`, so endpoints persist into a real session that the
     test can also query directly."""
     from fastapi.testclient import TestClient
-    from db import get_db
-    from main import app
+    # Key the override off main's binding, not `db.get_db`: test_db.py reloads
+    # the `db` module, which replaces `db.get_db` with a new function object
+    # while the app's routes still depend on the original. main imports get_db
+    # once and is never reloaded, so main.get_db is the object every route
+    # actually uses — overriding it is immune to the reload.
+    from main import app, get_db
 
     def _override():
         yield db_session
@@ -85,8 +89,11 @@ def client_with_db_and_auth(client_with_db):
     """TestClient with DB + a stubbed authenticated user. Both
     get_current_user (required) and get_current_user_optional return
     TEST_USER_ID, so endpoints behave as if a real Clerk JWT was verified."""
-    from auth import get_current_user, get_current_user_optional
-    from main import app
+    # Import the dependency callables from main, not auth: test_auth.py reloads
+    # the `auth` module, so `auth.get_current_user` becomes a new object that no
+    # longer matches what the app's routes depend on. main's bindings are the
+    # stable originals every route uses.
+    from main import app, get_current_user, get_current_user_optional
 
     app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
     app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
@@ -102,8 +109,12 @@ def client_with_db_auth_and_org(client_with_db):
     """TestClient with DB + authed user + active organisation context.
     get_current_org_optional returns TEST_ORG_ID, so every persistence and
     listing path treats the caller as a member of that org."""
-    from auth import get_current_user, get_current_user_optional, get_current_org_optional
-    from main import app
+    from main import (
+        app,
+        get_current_org_optional,
+        get_current_user,
+        get_current_user_optional,
+    )
 
     app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
     app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
@@ -120,13 +131,13 @@ def client_with_db_auth_and_org(client_with_db):
 def client_with_db_auth_org_admin(client_with_db):
     """TestClient with DB + authed user + active org + Clerk org_role=admin.
     Phase 8.4 fixture for the org-Checkout / org-Portal endpoints."""
-    from auth import (
+    from main import (
+        app,
         get_current_org_optional,
         get_current_org_role_optional,
         get_current_user,
         get_current_user_optional,
     )
-    from main import app
 
     app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
     app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
@@ -145,13 +156,13 @@ def client_with_db_auth_org_admin(client_with_db):
 def client_with_db_auth_org_viewer(client_with_db):
     """Same as client_with_db_auth_org_admin but org_role=viewer — used to
     verify the admin-only endpoints 403 a non-admin member."""
-    from auth import (
+    from main import (
+        app,
         get_current_org_optional,
         get_current_org_role_optional,
         get_current_user,
         get_current_user_optional,
     )
-    from main import app
 
     app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
     app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
@@ -171,8 +182,7 @@ def client_with_auth_only():
     """TestClient with the auth user stubbed but NO database — used to verify
     503 behaviour on endpoints that need a DB to honour the request."""
     from fastapi.testclient import TestClient
-    from auth import get_current_user, get_current_user_optional
-    from main import app
+    from main import app, get_current_user, get_current_user_optional
 
     app.dependency_overrides[get_current_user] = lambda: TEST_USER_ID
     app.dependency_overrides[get_current_user_optional] = lambda: TEST_USER_ID
