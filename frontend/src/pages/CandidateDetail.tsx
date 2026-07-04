@@ -3,6 +3,7 @@ import { useAuth } from '@clerk/clerk-react'
 import { Link, useParams } from 'react-router-dom'
 import { getCandidate, getScan, updateCandidate } from '../lib/api'
 import type { Candidate, ScanResult } from '../lib/types'
+import { OutreachComposer } from '../components/OutreachComposer'
 import { RiskTab } from '../components/tabs/RiskTab'
 import { MatchTab } from '../components/tabs/MatchTab'
 import { ProofTab } from '../components/tabs/ProofTab'
@@ -198,6 +199,8 @@ export function CandidateDetail() {
             : 'This candidate was added manually — no scan attached.'}
         </div>
       )}
+
+      <OutreachComposer candidateId={candidate.id} />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import {
   SignInButton,
   UserButton,
 } from '@clerk/clerk-react'
+import { NotificationBell } from './NotificationBell'
 
 // Sidebar navigation. Pipeline / Talent / Dashboard are stubbed as "soon" so
 // the information architecture is visible from Phase 1 — later phases just
@@ -137,6 +138,7 @@ export function AppShell() {
               </SignInButton>
             </SignedOut>
             <SignedIn>
+              <NotificationBell />
               <OrganizationSwitcher hidePersonal={false} />
               <UserButton afterSignOutUrl="/" />
             </SignedIn>
