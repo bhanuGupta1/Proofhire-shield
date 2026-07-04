@@ -85,6 +85,8 @@ from stripe_billing import (
     is_billing_configured,
     verify_and_parse_event,
 )
+from routers import candidates as candidates_router
+from routers import jobs as jobs_router
 
 logger = logging.getLogger(__name__)
 
@@ -286,9 +288,15 @@ _CORS_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_methods=["GET", "POST"],
+    # PATCH/DELETE added for the platform CRUD routers (candidates, jobs, …).
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
+
+# Platform feature routers (candidates, jobs, …) — mounted alongside the core
+# scan endpoints rather than appended to this file.
+app.include_router(candidates_router.router)
+app.include_router(jobs_router.router)
 
 
 @app.get("/health")
