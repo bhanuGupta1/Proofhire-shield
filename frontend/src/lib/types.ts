@@ -397,3 +397,11 @@ export interface AuditList {
   entries: AuditEntry[]
   count: number
 }
+
+// ── Platform: import ─────────────────────────────────────────────────────────
+
+export interface ImportResult {
+  created: number
+  skipped: number
+  invalid: number
+}

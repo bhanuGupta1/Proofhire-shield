@@ -16,6 +16,7 @@ import type {
   DashboardMetrics,
   FollowupResponse,
   JDMatchResult,
+  ImportResult,
   Job,
   JobCreate,
   JobListResponse,
@@ -655,6 +656,34 @@ export async function draftOutreach(
 
 export async function getAudit(token: string): Promise<AuditList> {
   const res = await fetch(`${API_BASE}/audit`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: import ─────────────────────────────────────────────────────────
+
+export async function importCandidates(
+  rows: Record<string, string>[],
+  token: string,
+): Promise<ImportResult> {
+  const res = await fetch(`${API_BASE}/import/candidates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ rows }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function importJobs(
+  rows: Record<string, string>[],
+  token: string,
+): Promise<ImportResult> {
+  const res = await fetch(`${API_BASE}/import/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ rows }),
+  })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
 }
