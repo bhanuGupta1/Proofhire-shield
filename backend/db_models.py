@@ -200,6 +200,81 @@ class MonthlyUsage(Base):
     )
 
 
+class Candidate(Base):
+    """A person tracked in the recruiter's pipeline (platform Phase 1).
+
+    A candidate is normally *promoted from a scan* — the scan is the security
+    audit anchor, so `scan_id` records how this person entered the system
+    (which CV was scanned, with what risk findings). It is nullable + SET NULL
+    on scan delete: a candidate outlives the deletion of their scan (the
+    pipeline history must survive), but we record the provenance while it
+    exists. Candidates created manually (no CV) carry scan_id = NULL and
+    source != 'scan'.
+
+    Tenant scoping mirrors Scan/Assessment: user_id owns the row, org_id (when
+    the creator acted inside a Clerk org) makes it visible to every org member.
+    """
+
+    __tablename__ = "candidates"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    # SET NULL (not CASCADE): deleting the underlying scan must NOT delete the
+    # candidate — the pipeline record is the durable business object; the scan
+    # is its origin evidence.
+    scan_id = Column(
+        Uuid, ForeignKey("scans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    full_name = Column(String(256), nullable=False)
+    email = Column(String(256), nullable=True)
+    phone = Column(String(64), nullable=True)
+    headline = Column(String(256), nullable=True)
+    location = Column(String(128), nullable=True)
+    # 'scan' (promoted from a CV scan) | 'manual' | later: 'import'.
+    source = Column(String(32), nullable=False, default="scan")
+    # Free-form pipeline status until Phase 2 introduces per-job stages:
+    # 'new' | 'reviewing' | 'shortlisted' | 'rejected' | 'hired'.
+    status = Column(String(24), nullable=False, default="new")
+    notes = Column(Text, nullable=True)
+    tags = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    scan = relationship("Scan")
+
+
+class Job(Base):
+    """A role / requisition the recruiter is filling (platform Phase 1).
+
+    No FK to candidates yet — the candidate↔job relationship (placements,
+    pipeline stages, shortlists) lands in Phase 2 as its own association tables
+    so a candidate can sit in several jobs' pipelines at once. Tenant scoping is
+    identical to Candidate.
+    """
+
+    __tablename__ = "jobs"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    title = Column(String(256), nullable=False)
+    client_name = Column(String(256), nullable=True)
+    location = Column(String(128), nullable=True)
+    employment_type = Column(String(32), nullable=True)
+    seniority = Column(String(32), nullable=True)
+    description = Column(Text, nullable=False, default="")
+    required_skills = Column(JSON, nullable=False, default=list)
+    # 'open' | 'on_hold' | 'closed' | 'filled'.
+    status = Column(String(24), nullable=False, default="open")
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
 class WebhookEvent(Base):
     """Stripe webhook idempotency ledger (Phase 7.5).
 
