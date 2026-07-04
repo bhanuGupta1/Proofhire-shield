@@ -24,6 +24,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -273,6 +274,101 @@ class Job(Base):
     updated_at = Column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
     )
+
+
+class PipelineStage(Base):
+    """An ordered column in a job's hiring funnel (platform Phase 2).
+
+    Stages belong to a job (CASCADE: deleting the job removes its stages). The
+    board seeds a default set lazily the first time it's requested for a job
+    that has none, so job creation stays untouched. `position` orders the
+    columns left-to-right; gaps are allowed so a reorder only rewrites moved
+    rows.
+    """
+
+    __tablename__ = "pipeline_stages"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = Column(String(64), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class Placement(Base):
+    """A candidate's position in one job's pipeline (platform Phase 2).
+
+    Unique on (job_id, candidate_id): a candidate appears at most once in a
+    given job's funnel, but can sit in several jobs' pipelines at once. Both FKs
+    CASCADE — the placement is meaningless without its job and candidate.
+    stage_id is SET NULL so deleting a stage never destroys the placement; the
+    board buckets a null-stage placement into the first stage.
+    """
+
+    __tablename__ = "placements"
+    __table_args__ = (
+        UniqueConstraint("job_id", "candidate_id", name="uq_placement_job_candidate"),
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage_id = Column(
+        Uuid,
+        ForeignKey("pipeline_stages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    candidate = relationship("Candidate")
+
+
+class ShortlistEntry(Base):
+    """A candidate starred for a job (platform Phase 2).
+
+    Distinct from pipeline position: a shortlist is a lightweight curated set a
+    recruiter can later share with a client (Phase 5), independent of where the
+    candidate sits in the funnel. Unique on (job_id, candidate_id); both FKs
+    CASCADE.
+    """
+
+    __tablename__ = "shortlist_entries"
+    __table_args__ = (
+        UniqueConstraint("job_id", "candidate_id", name="uq_shortlist_job_candidate"),
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    candidate = relationship("Candidate")
 
 
 class WebhookEvent(Base):
