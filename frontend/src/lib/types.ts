@@ -270,3 +270,37 @@ export interface TalentSearchResponse {
   query: string
   results: TalentHit[]
 }
+
+// ── Platform: dashboard & today ──────────────────────────────────────────────
+
+export interface DashboardMetrics {
+  candidates_total: number
+  candidates_by_status: Record<string, number>
+  jobs_total: number
+  jobs_by_status: Record<string, number>
+  open_jobs: number
+  placements_total: number
+  shortlist_total: number
+  risk: { GREEN: number; ORANGE: number; RED: number }
+}
+
+export interface MiniCandidate {
+  id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+}
+
+export interface MiniJob {
+  id: string
+  title: string
+}
+
+export interface TodayQueue {
+  new_candidates: MiniCandidate[]
+  new_candidates_count: number
+  high_risk_candidates: MiniCandidate[]
+  high_risk_count: number
+  open_jobs_without_candidates: MiniJob[]
+  open_jobs_without_candidates_count: number
+}

@@ -8,6 +8,7 @@ import type {
   CandidateCreate,
   CandidateListResponse,
   CandidateUpdate,
+  DashboardMetrics,
   FollowupResponse,
   JDMatchResult,
   Job,
@@ -20,6 +21,7 @@ import type {
   ScanResponse,
   ScanResult,
   TalentSearchResponse,
+  TodayQueue,
 } from './types'
 
 export const API_BASE: string =
@@ -472,4 +474,35 @@ export async function talentSearch(
   })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
+}
+
+// ── Platform: dashboard & today ──────────────────────────────────────────────
+
+export async function getDashboardMetrics(
+  token: string,
+): Promise<DashboardMetrics> {
+  const res = await fetch(`${API_BASE}/dashboard/metrics`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function getToday(token: string): Promise<TodayQueue> {
+  const res = await fetch(`${API_BASE}/today`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// The report PDF endpoint needs an auth header, so it can't be a plain <a href>.
+// Fetch the bytes and hand back a blob the caller turns into a download.
+export async function downloadReportPdf(
+  jobId: string,
+  token: string,
+): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/report.pdf`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.blob()
 }
