@@ -304,3 +304,50 @@ export interface TodayQueue {
   open_jobs_without_candidates: MiniJob[]
   open_jobs_without_candidates_count: number
 }
+
+// ── Platform: clients & shares ───────────────────────────────────────────────
+
+export interface Client {
+  id: string
+  name: string
+  contact_name: string | null
+  contact_email: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ClientListResponse {
+  clients: Client[]
+  count: number
+}
+
+export interface ClientCreate {
+  name: string
+  contact_name?: string
+  contact_email?: string
+  notes?: string
+}
+
+export interface ClientShare {
+  id: string
+  token: string
+  path: string
+  label: string | null
+  expires_at: string | null
+  created_at: string
+}
+
+export interface PublicShareCandidate {
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
+
+export interface PublicShare {
+  job_title: string
+  client_name: string | null
+  candidates: PublicShareCandidate[]
+}

@@ -8,6 +8,10 @@ import type {
   CandidateCreate,
   CandidateListResponse,
   CandidateUpdate,
+  Client,
+  ClientCreate,
+  ClientListResponse,
+  ClientShare,
   DashboardMetrics,
   FollowupResponse,
   JDMatchResult,
@@ -17,6 +21,7 @@ import type {
   JobUpdate,
   PipelineBoard,
   PipelineStageView,
+  PublicShare,
   ScanListResponse,
   ScanResponse,
   ScanResult,
@@ -490,6 +495,77 @@ export async function getDashboardMetrics(
 
 export async function getToday(token: string): Promise<TodayQueue> {
   const res = await fetch(`${API_BASE}/today`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: clients ────────────────────────────────────────────────────────
+
+export async function createClient(
+  body: ClientCreate,
+  token: string,
+): Promise<Client> {
+  const res = await fetch(`${API_BASE}/clients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function listClients(token: string): Promise<ClientListResponse> {
+  const res = await fetch(`${API_BASE}/clients`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function deleteClient(id: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/clients/${id}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// ── Platform: shares ─────────────────────────────────────────────────────────
+
+export async function createShare(
+  jobId: string,
+  token: string,
+  opts?: { label?: string; expires_in_days?: number },
+): Promise<ClientShare> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/share`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(opts ?? {}),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function listShares(
+  jobId: string,
+  token: string,
+): Promise<ClientShare[]> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/shares`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return (await res.json()).shares
+}
+
+export async function revokeShare(shareId: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/shares/${shareId}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// Public share view — no auth header; the token in the path is the credential.
+export async function getPublicShare(token: string): Promise<PublicShare> {
+  const res = await fetch(`${API_BASE}/share/${token}`)
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
 }
