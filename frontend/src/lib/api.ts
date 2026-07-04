@@ -1,7 +1,9 @@
 import type {
   AssessmentReport,
   BillingStatus,
+  BoardCard,
   Candidate,
+  CandidateCard,
   CandidateCreate,
   CandidateListResponse,
   CandidateUpdate,
@@ -11,6 +13,8 @@ import type {
   JobCreate,
   JobListResponse,
   JobUpdate,
+  PipelineBoard,
+  PipelineStageView,
   ScanListResponse,
   ScanResponse,
   ScanResult,
@@ -320,6 +324,120 @@ export async function updateJob(
 
 export async function deleteJob(id: string, token: string): Promise<void> {
   const res = await fetch(`${API_BASE}/jobs/${id}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// ── Platform: pipeline ───────────────────────────────────────────────────────
+
+export async function getPipeline(
+  jobId: string,
+  token: string,
+): Promise<PipelineBoard> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/pipeline`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function addStage(
+  jobId: string,
+  name: string,
+  token: string,
+): Promise<PipelineStageView> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/stages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ name }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function deleteStage(stageId: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/pipeline/stages/${stageId}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+export async function addPlacement(
+  jobId: string,
+  candidateId: string,
+  token: string,
+  stageId?: string,
+): Promise<BoardCard> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/placements`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ candidate_id: candidateId, stage_id: stageId }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function movePlacement(
+  placementId: string,
+  stageId: string,
+  token: string,
+): Promise<BoardCard> {
+  const res = await fetch(`${API_BASE}/pipeline/placements/${placementId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ stage_id: stageId }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function removePlacement(
+  placementId: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/pipeline/placements/${placementId}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// ── Platform: shortlist ──────────────────────────────────────────────────────
+
+export async function getShortlist(
+  jobId: string,
+  token: string,
+): Promise<CandidateCard[]> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/shortlist`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function addToShortlist(
+  jobId: string,
+  candidateId: string,
+  token: string,
+): Promise<CandidateCard> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/shortlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ candidate_id: candidateId }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function removeFromShortlist(
+  jobId: string,
+  candidateId: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/shortlist/${candidateId}`, {
     method: 'DELETE',
     headers: bearer(token),
   })

@@ -203,3 +203,37 @@ export interface JobCreate {
 }
 
 export type JobUpdate = Partial<JobCreate> & { status?: string }
+
+// ── Platform: pipeline & shortlists ──────────────────────────────────────────
+
+export interface BoardCard {
+  placement_id: string
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
+
+export interface PipelineStageView {
+  id: string
+  name: string
+  position: number
+  candidates: BoardCard[]
+}
+
+export interface PipelineBoard {
+  job_id: string
+  stages: PipelineStageView[]
+}
+
+// Compact candidate representation returned by the shortlist endpoints.
+export interface CandidateCard {
+  id: string
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
