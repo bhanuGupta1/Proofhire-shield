@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { getJob, updateJob } from '../lib/api'
+import { downloadReportPdf, getJob, updateJob } from '../lib/api'
 import type { Job } from '../lib/types'
 import { PipelineBoard } from '../components/PipelineBoard'
 import { ShortlistPanel } from '../components/ShortlistPanel'
@@ -41,6 +41,19 @@ export function JobDetail() {
     const token = await getToken()
     if (!token) return
     setJob(await updateJob(id, { status: next }, token))
+  }
+
+  async function exportReport() {
+    if (!id || !job) return
+    const token = await getToken()
+    if (!token) return
+    const blob = await downloadReportPdf(id, token)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `shortlist-${job.title}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   if (loading) {
@@ -88,6 +101,13 @@ export function JobDetail() {
                 </option>
               ))}
             </select>
+            <button
+              onClick={() => void exportReport()}
+              title="Download the shortlist as a client-ready PDF"
+              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+            >
+              Export PDF
+            </button>
             <button
               onClick={() => navigate(`/jobs/${job.id}/edit`)}
               className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
