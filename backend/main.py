@@ -90,6 +90,7 @@ from routers import clients as clients_router
 from routers import dashboard as dashboard_router
 from routers import jobs as jobs_router
 from routers import matching as matching_router
+from routers import notifications as notifications_router
 from routers import pipeline as pipeline_router
 from routers import reports as reports_router
 
@@ -307,6 +308,7 @@ app.include_router(matching_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(reports_router.router)
 app.include_router(clients_router.router)
+app.include_router(notifications_router.router)
 
 
 @app.get("/health")

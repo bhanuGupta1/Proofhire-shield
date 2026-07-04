@@ -24,6 +24,7 @@ from auth import get_current_org_optional, get_current_user
 from db import get_db
 from db_models import Candidate, Scan
 from routers._common import tenant_scope
+from routers.notifications import record_notification
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
@@ -188,6 +189,26 @@ def create_candidate(
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save candidate.")
+
+    # Phase 6 — a high-risk CV entering the pipeline warrants a heads-up. Best
+    # effort: a notification failure must not fail the candidate creation.
+    if cand.scan is not None and cand.scan.risk_level == "RED":
+        try:
+            record_notification(
+                db,
+                user_id=current_user,
+                org_id=current_org,
+                type="high_risk",
+                title=f"High-risk CV: {cand.full_name}",
+                body=(
+                    "This candidate's CV scanned as high-risk (hidden "
+                    "instructions or sensitive data). Review before using it "
+                    "in any AI tool."
+                ),
+                candidate_id=cand.id,
+            )
+        except SQLAlchemyError:
+            db.rollback()
     return _serialise(cand)
 
 
