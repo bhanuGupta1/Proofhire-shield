@@ -351,3 +351,33 @@ export interface PublicShare {
   client_name: string | null
   candidates: PublicShareCandidate[]
 }
+
+// ── Platform: notifications & outreach ───────────────────────────────────────
+
+export interface Notification {
+  id: string
+  type: string
+  title: string
+  body: string | null
+  candidate_id: string | null
+  read: boolean
+  created_at: string
+}
+
+export interface NotificationList {
+  notifications: Notification[]
+  unread_count: number
+}
+
+export interface OutreachMessage {
+  id: string
+  channel: string
+  subject: string | null
+  body: string
+  created_at: string
+}
+
+export interface OutreachDraft {
+  subject: string
+  body: string
+}

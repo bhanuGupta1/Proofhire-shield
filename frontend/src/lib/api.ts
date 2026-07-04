@@ -19,6 +19,9 @@ import type {
   JobCreate,
   JobListResponse,
   JobUpdate,
+  NotificationList,
+  OutreachDraft,
+  OutreachMessage,
   PipelineBoard,
   PipelineStageView,
   PublicShare,
@@ -566,6 +569,83 @@ export async function revokeShare(shareId: string, token: string): Promise<void>
 // Public share view — no auth header; the token in the path is the credential.
 export async function getPublicShare(token: string): Promise<PublicShare> {
   const res = await fetch(`${API_BASE}/share/${token}`)
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: notifications & outreach ───────────────────────────────────────
+
+export async function listNotifications(
+  token: string,
+): Promise<NotificationList> {
+  const res = await fetch(`${API_BASE}/notifications`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function getUnreadCount(token: string): Promise<number> {
+  const res = await fetch(`${API_BASE}/notifications/unread-count`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return (await res.json()).count
+}
+
+export async function markNotificationRead(
+  id: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/notifications/${id}/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+export async function markAllNotificationsRead(token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/notifications/read-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+export async function listOutreach(
+  candidateId: string,
+  token: string,
+): Promise<OutreachMessage[]> {
+  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outreach`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function logOutreach(
+  candidateId: string,
+  body: { channel: string; subject?: string; body: string },
+  token: string,
+): Promise<OutreachMessage> {
+  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function draftOutreach(
+  candidateId: string,
+  token: string,
+): Promise<OutreachDraft> {
+  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outreach/draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
 }
