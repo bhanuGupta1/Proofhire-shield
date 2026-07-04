@@ -1,8 +1,16 @@
 import type {
   AssessmentReport,
   BillingStatus,
+  Candidate,
+  CandidateCreate,
+  CandidateListResponse,
+  CandidateUpdate,
   FollowupResponse,
   JDMatchResult,
+  Job,
+  JobCreate,
+  JobListResponse,
+  JobUpdate,
   ScanListResponse,
   ScanResponse,
   ScanResult,
@@ -201,4 +209,119 @@ export async function sendFollowup(
     throw new Error(await errorDetail(res))
   }
   return res.json()
+}
+
+// ── Platform: candidates ─────────────────────────────────────────────────────
+
+export async function createCandidate(
+  body: CandidateCreate,
+  token: string,
+): Promise<Candidate> {
+  const res = await fetch(`${API_BASE}/candidates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function listCandidates(
+  token: string,
+  params?: { status?: string; q?: string },
+): Promise<CandidateListResponse> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  if (params?.q) qs.set('q', params.q)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await fetch(`${API_BASE}/candidates${suffix}`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function getCandidate(
+  id: string,
+  token: string,
+): Promise<Candidate> {
+  const res = await fetch(`${API_BASE}/candidates/${id}`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function updateCandidate(
+  id: string,
+  body: CandidateUpdate,
+  token: string,
+): Promise<Candidate> {
+  const res = await fetch(`${API_BASE}/candidates/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function deleteCandidate(id: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/candidates/${id}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// ── Platform: jobs ───────────────────────────────────────────────────────────
+
+export async function createJob(body: JobCreate, token: string): Promise<Job> {
+  const res = await fetch(`${API_BASE}/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function listJobs(
+  token: string,
+  params?: { status?: string },
+): Promise<JobListResponse> {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const res = await fetch(`${API_BASE}/jobs${suffix}`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function getJob(id: string, token: string): Promise<Job> {
+  const res = await fetch(`${API_BASE}/jobs/${id}`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function updateJob(
+  id: string,
+  body: JobUpdate,
+  token: string,
+): Promise<Job> {
+  const res = await fetch(`${API_BASE}/jobs/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function deleteJob(id: string, token: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/jobs/${id}`, {
+    method: 'DELETE',
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
 }

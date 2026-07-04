@@ -121,3 +121,85 @@ export type MatchEngine = 'llm' | 'regex'
 export interface FollowupResponse {
   answer: string
 }
+
+// ── Platform: candidates & jobs ──────────────────────────────────────────────
+
+export interface Candidate {
+  id: string
+  full_name: string
+  email: string | null
+  phone: string | null
+  headline: string | null
+  location: string | null
+  source: string
+  status: string
+  notes: string | null
+  tags: string[]
+  scan_id: string | null
+  // Denormalised from the linked scan, when present.
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CandidateListResponse {
+  candidates: Candidate[]
+  count: number
+}
+
+// Fields a recruiter can send when creating a candidate. When scan_id is set
+// the server fills name/email/phone/headline from the scan, so full_name is
+// optional in that path.
+export interface CandidateCreate {
+  full_name?: string
+  email?: string
+  phone?: string
+  headline?: string
+  location?: string
+  notes?: string
+  tags?: string[]
+  scan_id?: string
+}
+
+export interface CandidateUpdate {
+  full_name?: string
+  email?: string
+  phone?: string
+  headline?: string
+  location?: string
+  status?: string
+  notes?: string
+  tags?: string[]
+}
+
+export interface Job {
+  id: string
+  title: string
+  client_name: string | null
+  location: string | null
+  employment_type: string | null
+  seniority: string | null
+  description: string
+  required_skills: string[]
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface JobListResponse {
+  jobs: Job[]
+  count: number
+}
+
+export interface JobCreate {
+  title: string
+  client_name?: string
+  location?: string
+  employment_type?: string
+  seniority?: string
+  description?: string
+  required_skills?: string[]
+}
+
+export type JobUpdate = Partial<JobCreate> & { status?: string }
