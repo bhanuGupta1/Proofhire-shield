@@ -1,5 +1,10 @@
 # ProofHire Shield — Platform Roadmap
 
+> **STATUS (2026-07-05): Phases 1–8 all shipped** on branch
+> `feature/ats-foundation` — 33 commits, 572 backend tests passing, frontend
+> builds clean. Migrations 0010–0014. The scanner is now a full recruiter
+> platform. "After Phase 8" below is the next-planning starting point.
+
 > **Goal:** Evolve ProofHire Shield from a single-CV scanner into a full
 > candidate-intelligence recruiting platform, while keeping its unique
 > security layer (hidden-instruction detection, PII flagging, Safe CV Copy,
