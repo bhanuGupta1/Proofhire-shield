@@ -1,5 +1,6 @@
 import type {
   AssessmentReport,
+  AuditList,
   AutoMatchResponse,
   BillingStatus,
   BoardCard,
@@ -646,6 +647,14 @@ export async function draftOutreach(
     headers: { 'Content-Type': 'application/json', ...bearer(token) },
     body: '{}',
   })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: audit ──────────────────────────────────────────────────────────
+
+export async function getAudit(token: string): Promise<AuditList> {
+  const res = await fetch(`${API_BASE}/audit`, { headers: bearer(token) })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
 }

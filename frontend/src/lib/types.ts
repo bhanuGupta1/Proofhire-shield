@@ -381,3 +381,19 @@ export interface OutreachDraft {
   subject: string
   body: string
 }
+
+// ── Platform: audit ──────────────────────────────────────────────────────────
+
+export interface AuditEntry {
+  id: string
+  action: string
+  entity_type: string | null
+  entity_id: string | null
+  summary: string
+  created_at: string
+}
+
+export interface AuditList {
+  entries: AuditEntry[]
+  count: number
+}
