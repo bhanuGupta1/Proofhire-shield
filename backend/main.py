@@ -87,6 +87,7 @@ from stripe_billing import (
 )
 from routers import candidates as candidates_router
 from routers import jobs as jobs_router
+from routers import matching as matching_router
 from routers import pipeline as pipeline_router
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,7 @@ app.add_middleware(
 app.include_router(candidates_router.router)
 app.include_router(jobs_router.router)
 app.include_router(pipeline_router.router)
+app.include_router(matching_router.router)
 
 
 @app.get("/health")
