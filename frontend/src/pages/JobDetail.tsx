@@ -5,6 +5,7 @@ import { getJob, updateJob } from '../lib/api'
 import type { Job } from '../lib/types'
 import { PipelineBoard } from '../components/PipelineBoard'
 import { ShortlistPanel } from '../components/ShortlistPanel'
+import { MatchedCandidates } from '../components/MatchedCandidates'
 
 const STATUSES = ['open', 'on_hold', 'closed', 'filled']
 
@@ -126,12 +127,8 @@ export function JobDetail() {
       <PipelineBoard jobId={job.id} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <MatchedCandidates jobId={job.id} />
         <ShortlistPanel jobId={job.id} />
-        {/* Matched candidates lands in Phase 3 (semantic matching). */}
-        <div className="rounded-xl border border-dashed border-gray-300 bg-white/60 p-5 text-center">
-          <p className="text-sm font-medium text-gray-500">Matched candidates</p>
-          <p className="mt-1 text-xs text-gray-400">Semantic matching — coming soon.</p>
-        </div>
       </div>
     </div>
   )

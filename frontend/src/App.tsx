@@ -7,6 +7,7 @@ import { CandidateDetail } from './pages/CandidateDetail'
 import { JobsList } from './pages/JobsList'
 import { JobDetail } from './pages/JobDetail'
 import { JobForm } from './pages/JobForm'
+import { TalentSearch } from './pages/TalentSearch'
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
 
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="jobs/new" element={<JobForm />} />
             <Route path="jobs/:id" element={<JobDetail />} />
             <Route path="jobs/:id/edit" element={<JobForm />} />
+            <Route path="talent" element={<TalentSearch />} />
           </Route>
         </Routes>
       </BrowserRouter>
