@@ -371,6 +371,54 @@ class ShortlistEntry(Base):
     candidate = relationship("Candidate")
 
 
+class Client(Base):
+    """A client / customer the recruiter fills roles for (platform Phase 5).
+
+    Purely a CRM record for now; jobs reference a client by free-text
+    `client_name` today, so this table doesn't yet own a FK from jobs (that
+    normalisation is a later migration if it earns its keep). Tenant-scoped.
+    """
+
+    __tablename__ = "clients"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    name = Column(String(256), nullable=False)
+    contact_name = Column(String(256), nullable=True)
+    contact_email = Column(String(256), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
+class ClientShare(Base):
+    """An unguessable, optionally-expiring public link to a job's shortlist
+    (platform Phase 5).
+
+    The `token` is a high-entropy secret (secrets.token_urlsafe) — anyone with
+    the link sees ONLY this job's shortlist, read-only, no login. No candidate
+    contact details are exposed through the share (the shortlist card carries
+    name/headline/risk only). CASCADE on the job so deleting a job revokes its
+    shares. `expires_at` NULL means the link never expires until revoked.
+    """
+
+    __tablename__ = "client_shares"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    label = Column(String(128), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
 class WebhookEvent(Base):
     """Stripe webhook idempotency ledger (Phase 7.5).
 
