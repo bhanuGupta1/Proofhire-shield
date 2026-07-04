@@ -23,6 +23,7 @@ from auth import get_current_org_optional, get_current_user
 from db import get_db
 from db_models import Client, ClientShare, Job, ShortlistEntry
 from routers._common import tenant_scope
+from routers.audit import record_audit
 
 router = APIRouter(tags=["clients"])
 
@@ -242,6 +243,21 @@ def create_share(
     db.add(share)
     db.commit()
     db.refresh(share)
+
+    # Phase 7 — sharing a shortlist externally is exactly the kind of action an
+    # audit trail exists to record.
+    try:
+        record_audit(
+            db,
+            user_id=current_user,
+            org_id=current_org,
+            action="share.created",
+            entity_type="job",
+            entity_id=str(job.id),
+            summary=f"Shortlist share link created for '{job.title}'.",
+        )
+    except Exception:  # noqa: BLE001 — never let audit break the primary action
+        db.rollback()
     return _share_out(share)
 
 

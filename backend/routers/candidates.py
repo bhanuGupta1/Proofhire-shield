@@ -24,6 +24,7 @@ from auth import get_current_org_optional, get_current_user
 from db import get_db
 from db_models import Candidate, Scan
 from routers._common import tenant_scope
+from routers.audit import record_audit
 from routers.notifications import record_notification
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -189,6 +190,20 @@ def create_candidate(
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="Failed to save candidate.")
+
+    # Phase 7 — audit the creation (best-effort).
+    try:
+        record_audit(
+            db,
+            user_id=current_user,
+            org_id=current_org,
+            action="candidate.created",
+            entity_type="candidate",
+            entity_id=str(cand.id),
+            summary=f"Candidate '{cand.full_name}' added ({cand.source}).",
+        )
+    except SQLAlchemyError:
+        db.rollback()
 
     # Phase 6 — a high-risk CV entering the pipeline warrants a heads-up. Best
     # effort: a notification failure must not fail the candidate creation.

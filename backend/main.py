@@ -85,6 +85,7 @@ from stripe_billing import (
     is_billing_configured,
     verify_and_parse_event,
 )
+from routers import audit as audit_router
 from routers import candidates as candidates_router
 from routers import clients as clients_router
 from routers import dashboard as dashboard_router
@@ -309,6 +310,7 @@ app.include_router(dashboard_router.router)
 app.include_router(reports_router.router)
 app.include_router(clients_router.router)
 app.include_router(notifications_router.router)
+app.include_router(audit_router.router)
 
 
 @app.get("/health")

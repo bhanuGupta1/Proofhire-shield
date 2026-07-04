@@ -472,6 +472,29 @@ class OutreachMessage(Base):
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
 
+class AuditLog(Base):
+    """Append-only record of consequential actions (platform Phase 7).
+
+    ProofHire is an audit-first product; this table is the platform-level
+    counterpart to the per-scan Trust Report. Rows are written, never updated or
+    deleted through the app. Tenant-scoped. `entity_id` is a plain string (not a
+    FK) so the log survives deletion of whatever it references — the whole point
+    of an audit trail.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    # Dotted action, e.g. 'candidate.created', 'share.created'.
+    action = Column(String(48), nullable=False)
+    entity_type = Column(String(32), nullable=True)
+    entity_id = Column(String(64), nullable=True)
+    summary = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
 class WebhookEvent(Base):
     """Stripe webhook idempotency ledger (Phase 7.5).
 
