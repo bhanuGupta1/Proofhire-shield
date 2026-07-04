@@ -1,5 +1,6 @@
 import type {
   AssessmentReport,
+  AutoMatchResponse,
   BillingStatus,
   BoardCard,
   Candidate,
@@ -18,6 +19,7 @@ import type {
   ScanListResponse,
   ScanResponse,
   ScanResult,
+  TalentSearchResponse,
 } from './types'
 
 export const API_BASE: string =
@@ -442,4 +444,32 @@ export async function removeFromShortlist(
     headers: bearer(token),
   })
   if (!res.ok) throw new Error(await errorDetail(res))
+}
+
+// ── Platform: matching & talent search ───────────────────────────────────────
+
+export async function autoMatch(
+  jobId: string,
+  token: string,
+): Promise<AutoMatchResponse> {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/auto-match`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: '{}',
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function talentSearch(
+  query: string,
+  token: string,
+): Promise<TalentSearchResponse> {
+  const res = await fetch(`${API_BASE}/talent/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify({ query }),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
 }

@@ -237,3 +237,36 @@ export interface CandidateCard {
   risk_level: RiskLevel | null
   risk_score: number | null
 }
+
+// ── Platform: matching & talent search ───────────────────────────────────────
+
+export interface MatchCandidate {
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  score: number // 0–100
+  matched_skills: string[]
+  missing_skills: string[]
+}
+
+export interface AutoMatchResponse {
+  job_id: string
+  required_skills: string[]
+  matches: MatchCandidate[]
+}
+
+export interface TalentHit {
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  score: number // 0–100
+}
+
+export interface TalentSearchResponse {
+  query: string
+  results: TalentHit[]
+}
