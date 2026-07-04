@@ -9,6 +9,8 @@ import { JobDetail } from './pages/JobDetail'
 import { JobForm } from './pages/JobForm'
 import { TalentSearch } from './pages/TalentSearch'
 import { Dashboard } from './pages/Dashboard'
+import { ClientsList } from './pages/ClientsList'
+import { PublicShare } from './pages/PublicShare'
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
 
@@ -32,9 +34,12 @@ export default function App() {
     <ClerkProvider publishableKey={CLERK_KEY}>
       <BrowserRouter>
         <Routes>
+          {/* Standalone public share view — no app shell, no login. */}
+          <Route path="/s/:token" element={<PublicShare />} />
           <Route element={<AppShell />}>
             <Route index element={<ScanPage />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="clients" element={<ClientsList />} />
             <Route path="candidates" element={<CandidatesList />} />
             <Route path="candidates/:id" element={<CandidateDetail />} />
             <Route path="jobs" element={<JobsList />} />

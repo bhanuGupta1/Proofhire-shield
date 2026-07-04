@@ -6,6 +6,7 @@ import type { Job } from '../lib/types'
 import { PipelineBoard } from '../components/PipelineBoard'
 import { ShortlistPanel } from '../components/ShortlistPanel'
 import { MatchedCandidates } from '../components/MatchedCandidates'
+import { ShareManager } from '../components/ShareManager'
 
 const STATUSES = ['open', 'on_hold', 'closed', 'filled']
 
@@ -150,6 +151,8 @@ export function JobDetail() {
         <MatchedCandidates jobId={job.id} />
         <ShortlistPanel jobId={job.id} />
       </div>
+
+      <ShareManager jobId={job.id} />
     </div>
   )
 }

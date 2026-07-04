@@ -53,6 +53,13 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    to: '/clients',
+    label: 'Clients',
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0H5m14 0h2M5 21H3m6-14h2m-2 4h2m4-4h.01M13 11h.01M9 21v-4a1 1 0 011-1h4a1 1 0 011 1v4" /></svg>
+    ),
+  },
+  {
     to: '/pipeline',
     label: 'Pipeline',
     soon: true,
