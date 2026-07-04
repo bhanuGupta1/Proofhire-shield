@@ -11,6 +11,7 @@ import { TalentSearch } from './pages/TalentSearch'
 import { Dashboard } from './pages/Dashboard'
 import { ClientsList } from './pages/ClientsList'
 import { PublicShare } from './pages/PublicShare'
+import { AuditLog } from './pages/AuditLog'
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined
 
@@ -47,6 +48,7 @@ export default function App() {
             <Route path="jobs/:id" element={<JobDetail />} />
             <Route path="jobs/:id/edit" element={<JobForm />} />
             <Route path="talent" element={<TalentSearch />} />
+            <Route path="audit" element={<AuditLog />} />
           </Route>
         </Routes>
       </BrowserRouter>

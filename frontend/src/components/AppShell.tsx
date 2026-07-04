@@ -7,6 +7,8 @@ import {
   UserButton,
 } from '@clerk/clerk-react'
 import { NotificationBell } from './NotificationBell'
+import { CommandPalette } from './CommandPalette'
+import { ConsentBanner } from './ConsentBanner'
 
 // Sidebar navigation. Pipeline / Talent / Dashboard are stubbed as "soon" so
 // the information architecture is visible from Phase 1 — later phases just
@@ -75,6 +77,13 @@ const NAV: NavItem[] = [
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
     ),
   },
+  {
+    to: '/audit',
+    label: 'Audit Log',
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0119 9.414V19a2 2 0 01-2 2z" /></svg>
+    ),
+  },
 ]
 
 function NavRow({ item }: { item: NavItem }) {
@@ -113,6 +122,8 @@ function NavRow({ item }: { item: NavItem }) {
 export function AppShell() {
   return (
     <div className="min-h-screen bg-gray-50/60">
+      <CommandPalette />
+      <ConsentBanner />
       {/* Topbar */}
       <header className="sticky top-0 z-40 border-b border-gray-200/70 bg-white/75 px-4 py-3 backdrop-blur-md sm:px-6">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
