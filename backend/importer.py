@@ -12,12 +12,17 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-def _s(value) -> Optional[str]:
-    """Coerce a cell to a trimmed string, or None if empty."""
+def _s(value, limit: int = 256) -> Optional[str]:
+    """Coerce a cell to a trimmed string capped at `limit`, or None if empty.
+
+    Capping here (not just on name/title) keeps every imported field within its
+    DB column width, so one oversized cell can't blow up the whole batch commit
+    on Postgres (Codex P-round finding).
+    """
     if value is None:
         return None
     text = str(value).strip()
-    return text or None
+    return text[:limit] or None
 
 
 def clean_candidate(row: dict) -> Optional[dict]:
@@ -27,11 +32,11 @@ def clean_candidate(row: dict) -> Optional[dict]:
     if not name:
         return None
     return {
-        "full_name": name[:256],
+        "full_name": name,
         "email": _s(row.get("email")),
-        "phone": _s(row.get("phone") or row.get("phone_number")),
+        "phone": _s(row.get("phone") or row.get("phone_number"), 64),
         "headline": _s(row.get("headline") or row.get("title") or row.get("role")),
-        "location": _s(row.get("location") or row.get("city")),
+        "location": _s(row.get("location") or row.get("city"), 128),
     }
 
 
@@ -42,13 +47,15 @@ def clean_job(row: dict) -> Optional[dict]:
         return None
     skills_raw = row.get("required_skills") or row.get("skills") or ""
     if isinstance(skills_raw, list):
-        skills = [s for s in (_s(x) for x in skills_raw) if s]
+        skills = [s for s in (_s(x, 64) for x in skills_raw) if s]
     else:
-        skills = [s.strip() for s in str(skills_raw).split(",") if s.strip()]
+        skills = [s.strip()[:64] for s in str(skills_raw).split(",") if s.strip()]
+    # Bound the array so one row can't carry thousands of skills.
+    skills = skills[:50]
     return {
-        "title": title[:256],
+        "title": title,
         "client_name": _s(row.get("client_name") or row.get("client")),
-        "location": _s(row.get("location")),
+        "location": _s(row.get("location"), 128),
         "required_skills": skills,
     }
 
@@ -123,6 +130,13 @@ def _demo() -> None:
     jplan = plan_job_import(jobs, set())
     assert len(jplan.to_create) == 1, jplan.to_create
     assert jplan.to_create[0]["required_skills"] == ["python", "go"]
+
+    # Oversized fields are capped to their column widths, and the skill array
+    # is bounded, so one row can't error the batch on Postgres.
+    big = clean_candidate({"name": "X", "phone": "9" * 200, "location": "L" * 300})
+    assert len(big["phone"]) == 64 and len(big["location"]) == 128
+    manyskills = clean_job({"title": "T", "skills": ",".join(["s"] * 200)})
+    assert len(manyskills["required_skills"]) == 50
     print("importer self-check OK")
 
 

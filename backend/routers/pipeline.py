@@ -15,6 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import get_current_org_optional, get_current_user
@@ -336,7 +337,16 @@ def add_placement(
         stage_id=stage_id,
     )
     db.add(placement)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent duplicate slipped past the check above — the unique
+        # (job_id, candidate_id) constraint is the real guard. Return a
+        # deterministic 409 instead of a 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Candidate already in this job's pipeline."
+        )
     db.refresh(placement)
     return _card(placement)
 
@@ -460,7 +470,15 @@ def add_to_shortlist(
             candidate_id=cand.id,
         )
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent duplicate — the unique (job_id, candidate_id) constraint
+        # guards it; return 409 rather than 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Candidate already shortlisted for this job."
+        )
     return CandidateCard(
         id=str(cand.id),
         full_name=cand.full_name,

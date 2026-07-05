@@ -81,6 +81,22 @@ def test_mark_all_read(client_with_db_and_auth, db_session):
     assert client_with_db_and_auth.get("/notifications/unread-count").json()["count"] == 0
 
 
+def test_unread_count_exceeds_page_size(client_with_db_and_auth, db_session):
+    """Regression (Codex): unread_count must be the true total, not the count
+    within the 50-row display page."""
+    from db_models import Notification
+    from conftest import TEST_USER_ID
+
+    for i in range(60):
+        db_session.add(
+            Notification(user_id=TEST_USER_ID, type="info", title=f"n{i}", read=0)
+        )
+    db_session.commit()
+    body = client_with_db_and_auth.get("/notifications").json()
+    assert len(body["notifications"]) == 50  # page still capped
+    assert body["unread_count"] == 60  # but the badge is accurate
+
+
 def test_notifications_are_tenant_scoped(client_with_db_and_auth, db_session):
     from db_models import Notification
 

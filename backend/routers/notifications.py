@@ -116,11 +116,17 @@ def list_notifications(
 ) -> NotificationListOut:
     db = _require_db(db)
     q = tenant_scope(db.query(Notification), Notification, current_user, current_org)
-    # Unread first, then newest.
+    # Unread first, then newest. The display list is capped at 50, but the
+    # unread badge must reflect the TRUE unread total (Codex P-round: counting
+    # unread within the capped page under-reports once >50 unread exist).
     rows = q.order_by(Notification.read.asc(), Notification.created_at.desc()).limit(
         50
     ).all()
-    unread = sum(1 for n in rows if not n.read)
+    unread = (
+        tenant_scope(db.query(Notification), Notification, current_user, current_org)
+        .filter(Notification.read == 0)
+        .count()
+    )
     return NotificationListOut(
         notifications=[_notif_out(n) for n in rows], unread_count=unread
     )
