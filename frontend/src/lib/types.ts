@@ -430,3 +430,19 @@ export interface Funnel {
   total: number
   placed: number
 }
+
+// ── Platform: interview flags & outreach stages ──────────────────────────────
+
+export interface FlagSummary {
+  green_flags: string[]
+  red_flags: string[]
+  recommended_step: string
+}
+
+export type OutreachStage =
+  | 'sourced'
+  | 'applied'
+  | 'screened'
+  | 'interview'
+  | 'offer'
+  | 'rejection'
