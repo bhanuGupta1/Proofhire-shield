@@ -495,6 +495,39 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
 
+class Outcome(Base):
+    """A placement-funnel event for a candidate on a job (platform Phase 9).
+
+    An append-friendly event log, not a status column: a candidate can be
+    'interviewed' then 'offered' then 'hired' on the same job, and each is a
+    row with its own timestamp. This is what conversion metrics and client ROI
+    reports are computed from. Both FKs CASCADE — an outcome is meaningless
+    without its candidate and job.
+    """
+
+    __tablename__ = "outcomes"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 'interviewed' | 'offered' | 'hired' | 'rejected' | 'withdrawn' | 'placed'.
+    type = Column(String(16), nullable=False)
+    notes = Column(Text, nullable=True)
+    occurred_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    candidate = relationship("Candidate")
+
+
 class WebhookEvent(Base):
     """Stripe webhook idempotency ledger (Phase 7.5).
 
