@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom'
 import { getCandidate, getScan, updateCandidate } from '../lib/api'
 import type { Candidate, ScanResult } from '../lib/types'
 import { OutreachComposer } from '../components/OutreachComposer'
+import { OutcomeTracker } from '../components/OutcomeTracker'
 import { RiskTab } from '../components/tabs/RiskTab'
 import { MatchTab } from '../components/tabs/MatchTab'
 import { ProofTab } from '../components/tabs/ProofTab'
@@ -200,6 +201,7 @@ export function CandidateDetail() {
         </div>
       )}
 
+      <OutcomeTracker candidateId={candidate.id} />
       <OutreachComposer candidateId={candidate.id} />
     </div>
   )

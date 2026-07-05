@@ -15,6 +15,7 @@ import type {
   ClientShare,
   DashboardMetrics,
   FollowupResponse,
+  Funnel,
   JDMatchResult,
   ImportResult,
   Job,
@@ -22,6 +23,8 @@ import type {
   JobListResponse,
   JobUpdate,
   NotificationList,
+  Outcome,
+  OutcomeType,
   OutreachDraft,
   OutreachMessage,
   PipelineBoard,
@@ -656,6 +659,39 @@ export async function draftOutreach(
 
 export async function getAudit(token: string): Promise<AuditList> {
   const res = await fetch(`${API_BASE}/audit`, { headers: bearer(token) })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: outcomes ───────────────────────────────────────────────────────
+
+export async function recordOutcome(
+  candidateId: string,
+  body: { job_id: string; type: OutcomeType; notes?: string },
+  token: string,
+): Promise<Outcome> {
+  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outcomes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...bearer(token) },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function listCandidateOutcomes(
+  candidateId: string,
+  token: string,
+): Promise<Outcome[]> {
+  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outcomes`, {
+    headers: bearer(token),
+  })
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+export async function getTenantFunnel(token: string): Promise<Funnel> {
+  const res = await fetch(`${API_BASE}/outcomes/funnel`, { headers: bearer(token) })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
 }
