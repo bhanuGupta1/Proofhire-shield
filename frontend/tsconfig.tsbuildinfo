@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/components/fileupload.tsx","./src/components/sidebysideviewer.tsx","./src/components/trafficlight.tsx","./src/components/tabs/matchtab.tsx","./src/components/tabs/prooftab.tsx","./src/components/tabs/risktab.tsx","./src/lib/api.ts","./src/lib/types.ts"],"version":"5.9.3"}

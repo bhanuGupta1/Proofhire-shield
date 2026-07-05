@@ -121,3 +121,287 @@ export type MatchEngine = 'llm' | 'regex'
 export interface FollowupResponse {
   answer: string
 }
+
+// ── Platform: candidates & jobs ──────────────────────────────────────────────
+
+export interface Candidate {
+  id: string
+  full_name: string
+  email: string | null
+  phone: string | null
+  headline: string | null
+  location: string | null
+  source: string
+  status: string
+  notes: string | null
+  tags: string[]
+  scan_id: string | null
+  // Denormalised from the linked scan, when present.
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CandidateListResponse {
+  candidates: Candidate[]
+  count: number
+}
+
+// Fields a recruiter can send when creating a candidate. When scan_id is set
+// the server fills name/email/phone/headline from the scan, so full_name is
+// optional in that path.
+export interface CandidateCreate {
+  full_name?: string
+  email?: string
+  phone?: string
+  headline?: string
+  location?: string
+  notes?: string
+  tags?: string[]
+  scan_id?: string
+}
+
+export interface CandidateUpdate {
+  full_name?: string
+  email?: string
+  phone?: string
+  headline?: string
+  location?: string
+  status?: string
+  notes?: string
+  tags?: string[]
+}
+
+export interface Job {
+  id: string
+  title: string
+  client_name: string | null
+  location: string | null
+  employment_type: string | null
+  seniority: string | null
+  description: string
+  required_skills: string[]
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface JobListResponse {
+  jobs: Job[]
+  count: number
+}
+
+export interface JobCreate {
+  title: string
+  client_name?: string
+  location?: string
+  employment_type?: string
+  seniority?: string
+  description?: string
+  required_skills?: string[]
+}
+
+export type JobUpdate = Partial<JobCreate> & { status?: string }
+
+// ── Platform: pipeline & shortlists ──────────────────────────────────────────
+
+export interface BoardCard {
+  placement_id: string
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
+
+export interface PipelineStageView {
+  id: string
+  name: string
+  position: number
+  candidates: BoardCard[]
+}
+
+export interface PipelineBoard {
+  job_id: string
+  stages: PipelineStageView[]
+}
+
+// Compact candidate representation returned by the shortlist endpoints.
+export interface CandidateCard {
+  id: string
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
+
+// ── Platform: matching & talent search ───────────────────────────────────────
+
+export interface MatchCandidate {
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  score: number // 0–100
+  matched_skills: string[]
+  missing_skills: string[]
+}
+
+export interface AutoMatchResponse {
+  job_id: string
+  required_skills: string[]
+  matches: MatchCandidate[]
+}
+
+export interface TalentHit {
+  candidate_id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+  risk_score: number | null
+  score: number // 0–100
+}
+
+export interface TalentSearchResponse {
+  query: string
+  results: TalentHit[]
+}
+
+// ── Platform: dashboard & today ──────────────────────────────────────────────
+
+export interface DashboardMetrics {
+  candidates_total: number
+  candidates_by_status: Record<string, number>
+  jobs_total: number
+  jobs_by_status: Record<string, number>
+  open_jobs: number
+  placements_total: number
+  shortlist_total: number
+  risk: { GREEN: number; ORANGE: number; RED: number }
+}
+
+export interface MiniCandidate {
+  id: string
+  full_name: string
+  headline: string | null
+  risk_level: RiskLevel | null
+}
+
+export interface MiniJob {
+  id: string
+  title: string
+}
+
+export interface TodayQueue {
+  new_candidates: MiniCandidate[]
+  new_candidates_count: number
+  high_risk_candidates: MiniCandidate[]
+  high_risk_count: number
+  open_jobs_without_candidates: MiniJob[]
+  open_jobs_without_candidates_count: number
+}
+
+// ── Platform: clients & shares ───────────────────────────────────────────────
+
+export interface Client {
+  id: string
+  name: string
+  contact_name: string | null
+  contact_email: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ClientListResponse {
+  clients: Client[]
+  count: number
+}
+
+export interface ClientCreate {
+  name: string
+  contact_name?: string
+  contact_email?: string
+  notes?: string
+}
+
+export interface ClientShare {
+  id: string
+  token: string
+  path: string
+  label: string | null
+  expires_at: string | null
+  created_at: string
+}
+
+export interface PublicShareCandidate {
+  full_name: string
+  headline: string | null
+  status: string
+  risk_level: RiskLevel | null
+  risk_score: number | null
+}
+
+export interface PublicShare {
+  job_title: string
+  client_name: string | null
+  candidates: PublicShareCandidate[]
+}
+
+// ── Platform: notifications & outreach ───────────────────────────────────────
+
+export interface Notification {
+  id: string
+  type: string
+  title: string
+  body: string | null
+  candidate_id: string | null
+  read: boolean
+  created_at: string
+}
+
+export interface NotificationList {
+  notifications: Notification[]
+  unread_count: number
+}
+
+export interface OutreachMessage {
+  id: string
+  channel: string
+  subject: string | null
+  body: string
+  created_at: string
+}
+
+export interface OutreachDraft {
+  subject: string
+  body: string
+}
+
+// ── Platform: audit ──────────────────────────────────────────────────────────
+
+export interface AuditEntry {
+  id: string
+  action: string
+  entity_type: string | null
+  entity_id: string | null
+  summary: string
+  created_at: string
+}
+
+export interface AuditList {
+  entries: AuditEntry[]
+  count: number
+}
+
+// ── Platform: import ─────────────────────────────────────────────────────────
+
+export interface ImportResult {
+  created: number
+  skipped: number
+  invalid: number
+}

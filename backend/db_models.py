@@ -24,6 +24,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -198,6 +199,300 @@ class MonthlyUsage(Base):
     updated_at = Column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
     )
+
+
+class Candidate(Base):
+    """A person tracked in the recruiter's pipeline (platform Phase 1).
+
+    A candidate is normally *promoted from a scan* — the scan is the security
+    audit anchor, so `scan_id` records how this person entered the system
+    (which CV was scanned, with what risk findings). It is nullable + SET NULL
+    on scan delete: a candidate outlives the deletion of their scan (the
+    pipeline history must survive), but we record the provenance while it
+    exists. Candidates created manually (no CV) carry scan_id = NULL and
+    source != 'scan'.
+
+    Tenant scoping mirrors Scan/Assessment: user_id owns the row, org_id (when
+    the creator acted inside a Clerk org) makes it visible to every org member.
+    """
+
+    __tablename__ = "candidates"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    # SET NULL (not CASCADE): deleting the underlying scan must NOT delete the
+    # candidate — the pipeline record is the durable business object; the scan
+    # is its origin evidence.
+    scan_id = Column(
+        Uuid, ForeignKey("scans.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    full_name = Column(String(256), nullable=False)
+    email = Column(String(256), nullable=True)
+    phone = Column(String(64), nullable=True)
+    headline = Column(String(256), nullable=True)
+    location = Column(String(128), nullable=True)
+    # 'scan' (promoted from a CV scan) | 'manual' | later: 'import'.
+    source = Column(String(32), nullable=False, default="scan")
+    # Free-form pipeline status until Phase 2 introduces per-job stages:
+    # 'new' | 'reviewing' | 'shortlisted' | 'rejected' | 'hired'.
+    status = Column(String(24), nullable=False, default="new")
+    notes = Column(Text, nullable=True)
+    tags = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    scan = relationship("Scan")
+
+
+class Job(Base):
+    """A role / requisition the recruiter is filling (platform Phase 1).
+
+    No FK to candidates yet — the candidate↔job relationship (placements,
+    pipeline stages, shortlists) lands in Phase 2 as its own association tables
+    so a candidate can sit in several jobs' pipelines at once. Tenant scoping is
+    identical to Candidate.
+    """
+
+    __tablename__ = "jobs"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    title = Column(String(256), nullable=False)
+    client_name = Column(String(256), nullable=True)
+    location = Column(String(128), nullable=True)
+    employment_type = Column(String(32), nullable=True)
+    seniority = Column(String(32), nullable=True)
+    description = Column(Text, nullable=False, default="")
+    required_skills = Column(JSON, nullable=False, default=list)
+    # 'open' | 'on_hold' | 'closed' | 'filled'.
+    status = Column(String(24), nullable=False, default="open")
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
+class PipelineStage(Base):
+    """An ordered column in a job's hiring funnel (platform Phase 2).
+
+    Stages belong to a job (CASCADE: deleting the job removes its stages). The
+    board seeds a default set lazily the first time it's requested for a job
+    that has none, so job creation stays untouched. `position` orders the
+    columns left-to-right; gaps are allowed so a reorder only rewrites moved
+    rows.
+    """
+
+    __tablename__ = "pipeline_stages"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name = Column(String(64), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class Placement(Base):
+    """A candidate's position in one job's pipeline (platform Phase 2).
+
+    Unique on (job_id, candidate_id): a candidate appears at most once in a
+    given job's funnel, but can sit in several jobs' pipelines at once. Both FKs
+    CASCADE — the placement is meaningless without its job and candidate.
+    stage_id is SET NULL so deleting a stage never destroys the placement; the
+    board buckets a null-stage placement into the first stage.
+    """
+
+    __tablename__ = "placements"
+    __table_args__ = (
+        UniqueConstraint("job_id", "candidate_id", name="uq_placement_job_candidate"),
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    stage_id = Column(
+        Uuid,
+        ForeignKey("pipeline_stages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+    candidate = relationship("Candidate")
+
+
+class ShortlistEntry(Base):
+    """A candidate starred for a job (platform Phase 2).
+
+    Distinct from pipeline position: a shortlist is a lightweight curated set a
+    recruiter can later share with a client (Phase 5), independent of where the
+    candidate sits in the funnel. Unique on (job_id, candidate_id); both FKs
+    CASCADE.
+    """
+
+    __tablename__ = "shortlist_entries"
+    __table_args__ = (
+        UniqueConstraint("job_id", "candidate_id", name="uq_shortlist_job_candidate"),
+    )
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+    candidate = relationship("Candidate")
+
+
+class Client(Base):
+    """A client / customer the recruiter fills roles for (platform Phase 5).
+
+    Purely a CRM record for now; jobs reference a client by free-text
+    `client_name` today, so this table doesn't yet own a FK from jobs (that
+    normalisation is a later migration if it earns its keep). Tenant-scoped.
+    """
+
+    __tablename__ = "clients"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    name = Column(String(256), nullable=False)
+    contact_name = Column(String(256), nullable=True)
+    contact_email = Column(String(256), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
+    )
+
+
+class ClientShare(Base):
+    """An unguessable, optionally-expiring public link to a job's shortlist
+    (platform Phase 5).
+
+    The `token` is a high-entropy secret (secrets.token_urlsafe) — anyone with
+    the link sees ONLY this job's shortlist, read-only, no login. No candidate
+    contact details are exposed through the share (the shortlist card carries
+    name/headline/risk only). CASCADE on the job so deleting a job revokes its
+    shares. `expires_at` NULL means the link never expires until revoked.
+    """
+
+    __tablename__ = "client_shares"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    job_id = Column(
+        Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    label = Column(String(128), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class Notification(Base):
+    """An in-app notification for a recruiter (platform Phase 6).
+
+    Generated by platform events (e.g. a high-risk CV entering the pipeline).
+    Tenant-scoped; `read` flips when the recruiter acknowledges it. Optional
+    `candidate_id` deep-links the notification to a candidate (SET NULL so the
+    notification survives the candidate being deleted).
+    """
+
+    __tablename__ = "notifications"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    # 'high_risk' | 'info' | later event types.
+    type = Column(String(32), nullable=False, default="info")
+    title = Column(String(256), nullable=False)
+    body = Column(Text, nullable=True)
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    read = Column(Integer, nullable=False, default=0)  # 0/1 — portable boolean
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class OutreachMessage(Base):
+    """A logged outreach touch for a candidate (platform Phase 6).
+
+    Records that a recruiter contacted (or drafted a message to) a candidate.
+    CASCADE on the candidate — the log is meaningless without them.
+    """
+
+    __tablename__ = "outreach_messages"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    candidate_id = Column(
+        Uuid,
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # 'email' | 'note' | 'call'.
+    channel = Column(String(16), nullable=False, default="note")
+    subject = Column(String(256), nullable=True)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
+
+
+class AuditLog(Base):
+    """Append-only record of consequential actions (platform Phase 7).
+
+    ProofHire is an audit-first product; this table is the platform-level
+    counterpart to the per-scan Trust Report. Rows are written, never updated or
+    deleted through the app. Tenant-scoped. `entity_id` is a plain string (not a
+    FK) so the log survives deletion of whatever it references — the whole point
+    of an audit trail.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(64), nullable=True, index=True)
+    org_id = Column(String(64), nullable=True, index=True)
+    # Dotted action, e.g. 'candidate.created', 'share.created'.
+    action = Column(String(48), nullable=False)
+    entity_type = Column(String(32), nullable=True)
+    entity_id = Column(String(64), nullable=True)
+    summary = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utc_now, nullable=False)
 
 
 class WebhookEvent(Base):
