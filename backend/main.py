@@ -93,6 +93,7 @@ from routers import imports as imports_router
 from routers import jobs as jobs_router
 from routers import matching as matching_router
 from routers import notifications as notifications_router
+from routers import outcomes as outcomes_router
 from routers import pipeline as pipeline_router
 from routers import reports as reports_router
 
@@ -313,6 +314,7 @@ app.include_router(clients_router.router)
 app.include_router(notifications_router.router)
 app.include_router(audit_router.router)
 app.include_router(imports_router.router)
+app.include_router(outcomes_router.router)
 
 
 @app.get("/health")

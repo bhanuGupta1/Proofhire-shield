@@ -405,3 +405,28 @@ export interface ImportResult {
   skipped: number
   invalid: number
 }
+
+// ── Platform: outcomes ───────────────────────────────────────────────────────
+
+export type OutcomeType =
+  | 'interviewed'
+  | 'offered'
+  | 'hired'
+  | 'rejected'
+  | 'withdrawn'
+  | 'placed'
+
+export interface Outcome {
+  id: string
+  candidate_id: string
+  job_id: string
+  type: OutcomeType
+  notes: string | null
+  occurred_at: string
+}
+
+export interface Funnel {
+  counts: Record<string, number>
+  total: number
+  placed: number
+}

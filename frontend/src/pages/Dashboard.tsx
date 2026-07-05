@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useAuth, SignedIn, SignedOut, SignInButton } from '@clerk/clerk-react'
 import { Link } from 'react-router-dom'
-import { getDashboardMetrics, getToday } from '../lib/api'
-import type { DashboardMetrics, MiniCandidate, TodayQueue } from '../lib/types'
+import { getDashboardMetrics, getTenantFunnel, getToday } from '../lib/api'
+import type {
+  DashboardMetrics,
+  Funnel,
+  MiniCandidate,
+  TodayQueue,
+} from '../lib/types'
+
+const FUNNEL_ORDER = ['interviewed', 'offered', 'hired', 'placed', 'rejected', 'withdrawn']
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
@@ -55,6 +62,7 @@ function DashboardInner() {
   const { getToken } = useAuth()
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [today, setToday] = useState<TodayQueue | null>(null)
+  const [funnel, setFunnel] = useState<Funnel | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -66,12 +74,14 @@ function DashboardInner() {
           setError('Sign in to view your dashboard.')
           return
         }
-        const [m, t] = await Promise.all([
+        const [m, t, f] = await Promise.all([
           getDashboardMetrics(token),
           getToday(token),
+          getTenantFunnel(token),
         ])
         setMetrics(m)
         setToday(t)
+        setFunnel(f)
       } catch (e) {
         setError((e as Error).message || 'Could not load dashboard.')
       } finally {
@@ -113,6 +123,34 @@ function DashboardInner() {
         </h3>
         <RiskBar risk={metrics.risk} />
       </div>
+
+      {funnel && (
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Conversion funnel
+            </h3>
+            <span className="text-xs text-gray-400">
+              <span className="font-bold text-green-600">{funnel.placed}</span> placed ·{' '}
+              {funnel.total} outcomes
+            </span>
+          </div>
+          {funnel.total === 0 ? (
+            <p className="text-xs text-gray-400">
+              Record outcomes on candidates to track your placement funnel.
+            </p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {FUNNEL_ORDER.map((t) => (
+                <div key={t} className="rounded-lg bg-gray-50 p-2 text-center">
+                  <p className="text-lg font-bold text-gray-800">{funnel.counts[t] ?? 0}</p>
+                  <p className="text-[10px] capitalize text-gray-400">{t}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Today queue */}
       <div>
