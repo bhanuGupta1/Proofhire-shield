@@ -263,11 +263,17 @@ def log_outreach(
 )
 def draft_candidate_outreach(
     candidate_id: uuid.UUID,
+    stage: str = "sourced",
     db: Session | None = Depends(get_db),
     current_user: str = Depends(get_current_user),
     current_org: str | None = Depends(get_current_org_optional),
 ) -> OutreachDraftOut:
+    """Draft an outreach message. `stage` (sourced | applied | screened |
+    interview | offer | rejection) shapes the message intent; an unknown stage
+    falls back to a first-touch sourcing draft."""
     db = _require_db(db)
     cand = _load_candidate(db, candidate_id, current_user, current_org)
-    draft = draft_outreach(full_name=cand.full_name, headline=cand.headline)
+    draft = draft_outreach(
+        full_name=cand.full_name, headline=cand.headline, stage=stage
+    )
     return OutreachDraftOut(subject=draft.subject, body=draft.body)
