@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import { draftOutreach, listOutreach, logOutreach } from '../lib/api'
-import type { OutreachMessage } from '../lib/types'
+import type { OutreachMessage, OutreachStage } from '../lib/types'
+
+const STAGES: OutreachStage[] = [
+  'sourced',
+  'applied',
+  'screened',
+  'interview',
+  'offer',
+  'rejection',
+]
 
 export function OutreachComposer({ candidateId }: { candidateId: string }) {
   const { getToken } = useAuth()
@@ -9,6 +18,7 @@ export function OutreachComposer({ candidateId }: { candidateId: string }) {
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [channel, setChannel] = useState('email')
+  const [stage, setStage] = useState<OutreachStage>('sourced')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,7 +43,7 @@ export function OutreachComposer({ candidateId }: { candidateId: string }) {
     try {
       const token = await getToken()
       if (!token) return
-      const d = await draftOutreach(candidateId, token)
+      const d = await draftOutreach(candidateId, token, stage)
       setSubject(d.subject)
       setBody(d.body)
     } catch (e) {
@@ -74,13 +84,27 @@ export function OutreachComposer({ candidateId }: { candidateId: string }) {
         <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
           Outreach
         </h3>
-        <button
-          onClick={() => void draft()}
-          disabled={busy}
-          className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
-        >
-          ✨ Draft message
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={stage}
+            onChange={(e) => setStage(e.target.value as OutreachStage)}
+            title="Message stage"
+            className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs capitalize shadow-sm focus:border-blue-400 focus:outline-none"
+          >
+            {STAGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => void draft()}
+            disabled={busy}
+            className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-50"
+          >
+            ✨ Draft
+          </button>
+        </div>
       </div>
 
       {error && (

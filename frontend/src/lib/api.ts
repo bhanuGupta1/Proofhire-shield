@@ -14,6 +14,7 @@ import type {
   ClientListResponse,
   ClientShare,
   DashboardMetrics,
+  FlagSummary,
   FollowupResponse,
   Funnel,
   JDMatchResult,
@@ -25,6 +26,7 @@ import type {
   NotificationList,
   Outcome,
   OutcomeType,
+  OutreachStage,
   OutreachDraft,
   OutreachMessage,
   PipelineBoard,
@@ -645,11 +647,30 @@ export async function logOutreach(
 export async function draftOutreach(
   candidateId: string,
   token: string,
+  stage: OutreachStage = 'sourced',
 ): Promise<OutreachDraft> {
-  const res = await fetch(`${API_BASE}/candidates/${candidateId}/outreach/draft`, {
+  const res = await fetch(
+    `${API_BASE}/candidates/${candidateId}/outreach/draft?stage=${stage}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...bearer(token) },
+      body: '{}',
+    },
+  )
+  if (!res.ok) throw new Error(await errorDetail(res))
+  return res.json()
+}
+
+// ── Platform: interview flags ────────────────────────────────────────────────
+
+export async function interviewFlags(
+  notes: string,
+  token: string,
+): Promise<FlagSummary> {
+  const res = await fetch(`${API_BASE}/interview/flags`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...bearer(token) },
-    body: '{}',
+    body: JSON.stringify({ notes }),
   })
   if (!res.ok) throw new Error(await errorDetail(res))
   return res.json()
